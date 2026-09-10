@@ -113,6 +113,7 @@ import { createDevTunnelRuntime } from './lib/dev-tunnel/runtime.js';
 import { registerBrowserControlRoutes } from './lib/browser-control/routes.js';
 import { createSystemPromptRuntime } from './lib/system-prompt/runtime.js';
 import { createMcpReconnectRuntime } from './lib/mcp-reconnect/runtime.js';
+import { createPromptTelemetryRuntime } from './lib/prompt-telemetry/runtime.js';
 import { createOpenChamberSessionService } from './lib/openchamber-sessions/routes.js';
 import { createScheduledTaskService } from './lib/scheduled-tasks/service.js';
 import { createOpenChamberControlService } from './lib/openchamber-control/service.js';
@@ -232,6 +233,9 @@ const shouldSkipApiCompression = () => {
 };
 
 const OPENCHAMBER_VERBOSE_REQUEST_LOGS = isEnvFlagEnabled(process.env.OPENCHAMBER_VERBOSE_REQUEST_LOGS);
+// Diagnostic capture of what managed OpenCode sends to the model. Off by
+// default: the records hold the user's source, paths, and conversation.
+const OPENCHAMBER_PROMPT_TELEMETRY = isEnvFlagEnabled(process.env.OPENCHAMBER_PROMPT_TELEMETRY);
 
 const PLAN_MODE_EXPERIMENT_ENABLED =
   isEnvFlagEnabled(process.env.OPENCODE_EXPERIMENTAL_PLAN_MODE)
@@ -303,6 +307,7 @@ let notificationTemplateRuntime = null;
 let agentToolRuntime = null;
 let systemPromptRuntime = null;
 let mcpReconnectRuntime = null;
+let promptTelemetryRuntime = null;
 
 const createTimeoutSignal = (...args) => notificationTemplateRuntime.createTimeoutSignal(...args);
 const formatProjectLabel = (...args) => notificationTemplateRuntime.formatProjectLabel(...args);
@@ -1262,8 +1267,15 @@ const openCodeLifecycleRuntime = createOpenCodeLifecycleRuntime({
       ({ OPENCODE_CONFIG_CONTENT: configContent } = await systemPromptRuntime.prepareManagedOpenCodeEnv(configContent));
     }
     // Always on for managed OpenCode: it only retries servers OpenCode gave up on.
-    const mcpReconnectEnv = await mcpReconnectRuntime.prepareManagedOpenCodeEnv(configContent);
-    return { ...managedEnv, ...mcpReconnectEnv };
+    ({ OPENCODE_CONFIG_CONTENT: configContent } = await mcpReconnectRuntime.prepareManagedOpenCodeEnv(configContent));
+
+    // Last on purpose: plugin hooks run in load order over one shared output,
+    // so only a plugin appended after the others records what they leave behind.
+    if (OPENCHAMBER_PROMPT_TELEMETRY) {
+      ({ OPENCODE_CONFIG_CONTENT: configContent } = await promptTelemetryRuntime.prepareManagedOpenCodeEnv(configContent));
+    }
+
+    return { ...managedEnv, OPENCODE_CONFIG_CONTENT: configContent };
   },
 });
 
@@ -1538,6 +1550,11 @@ async function main(options = {}) {
     dataDir: OPENCHAMBER_DATA_DIR,
   });
   mcpReconnectRuntime = createMcpReconnectRuntime({
+    fsPromises,
+    path,
+    dataDir: OPENCHAMBER_DATA_DIR,
+  });
+  promptTelemetryRuntime = createPromptTelemetryRuntime({
     fsPromises,
     path,
     dataDir: OPENCHAMBER_DATA_DIR,
