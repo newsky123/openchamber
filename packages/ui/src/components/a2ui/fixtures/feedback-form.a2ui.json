@@ -1,0 +1,66 @@
+[
+  {
+    "version": "v1.0",
+    "createSurface": {
+      "surfaceId": "feedback",
+      "dataModel": {
+        "name": "",
+        "role": ["engineer"],
+        "notify": true,
+        "notes": ""
+      }
+    }
+  },
+  {
+    "version": "v1.0",
+    "updateComponents": {
+      "surfaceId": "feedback",
+      "components": [
+        {
+          "id": "root",
+          "component": "Column",
+          "children": ["title", "name", "role", "notify", "notes", "actions"]
+        },
+        { "id": "title", "component": "Text", "text": "Session feedback", "variant": "h2" },
+        { "id": "name", "component": "TextField", "label": "Your name", "value": { "path": "/name" } },
+        {
+          "id": "role",
+          "component": "ChoicePicker",
+          "label": "Role",
+          "variant": "mutuallyExclusive",
+          "value": { "path": "/role" },
+          "options": [
+            { "label": "Engineer", "value": "engineer" },
+            { "label": "Designer", "value": "designer" },
+            { "label": "Other", "value": "other" }
+          ]
+        },
+        { "id": "notify", "component": "CheckBox", "label": "Email me the summary", "value": { "path": "/notify" } },
+        {
+          "id": "notes",
+          "component": "TextField",
+          "label": "Notes",
+          "variant": "longText",
+          "value": { "path": "/notes" }
+        },
+        { "id": "actions", "component": "Row", "children": ["submit"], "justify": "end" },
+        {
+          "id": "submit",
+          "component": "Button",
+          "primary": true,
+          "child": "submitLabel",
+          "action": {
+            "name": "submitFeedback",
+            "context": {
+              "name": { "path": "/name" },
+              "role": { "path": "/role" },
+              "notify": { "path": "/notify" },
+              "notes": { "path": "/notes" }
+            }
+          }
+        },
+        { "id": "submitLabel", "component": "Text", "text": "Submit" }
+      ]
+    }
+  }
+]
