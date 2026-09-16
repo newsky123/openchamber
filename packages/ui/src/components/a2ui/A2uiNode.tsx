@@ -152,7 +152,10 @@ export const A2uiNode: React.FC<A2uiNodeProps> = ({ componentId, depth = 0 }) =>
     const label = resolveString(component.label, dataModel);
 
     return (
-      <div className="flex items-center gap-2">
+      // A <label> wrapping a real <button> (Checkbox's root) forwards a click
+      // anywhere in it to that button, so the text is clickable too — not
+      // only the small box, which is what a person actually aims for.
+      <label className="flex items-center gap-2">
         <Checkbox
           checked={checked}
           disabled={path === null}
@@ -160,7 +163,7 @@ export const A2uiNode: React.FC<A2uiNodeProps> = ({ componentId, depth = 0 }) =>
           onChange={(next) => { if (path) writeValue(path, next); }}
         />
         <span className="typography-markdown text-foreground">{label}</span>
-      </div>
+      </label>
     );
   }
 
@@ -189,7 +192,10 @@ export const A2uiNode: React.FC<A2uiNodeProps> = ({ componentId, depth = 0 }) =>
           const optionLabel = resolveString(option.label, dataModel);
           const checked = selected.includes(option.value);
           return (
-            <div key={option.value} className="flex items-center gap-2">
+            // Same reasoning as the standalone CheckBox: Radio's root is also
+            // a real <button>, so the <label> makes the option's text a
+            // click target instead of only its small control.
+            <label key={option.value} className="flex items-center gap-2">
               {multiple ? (
                 <Checkbox
                   checked={checked}
@@ -206,7 +212,7 @@ export const A2uiNode: React.FC<A2uiNodeProps> = ({ componentId, depth = 0 }) =>
                 />
               )}
               <span className="typography-markdown text-foreground">{optionLabel}</span>
-            </div>
+            </label>
           );
         })}
       </div>
