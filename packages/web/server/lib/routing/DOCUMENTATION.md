@@ -13,6 +13,11 @@ Dark by default: `OPENCHAMBER_ROUTING_ENABLE` (`feature-flag.js`, read per call)
 gates the routes, the request rewrite, the settings page and the Auto row. VS
 Code has no OpenChamber server and never offers Auto.
 
+[`ENABLEMENT.md`](./ENABLEMENT.md) covers the operational side: setting the
+variable per runtime, the readiness chain behind `autoReady`, what leaves the
+machine on each Jev call, the latency a send pays, the gaps still open before
+the flag comes off, and how to roll back.
+
 ## Files
 
 - `feature-flag.js` — the env gate.
