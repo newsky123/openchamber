@@ -699,6 +699,42 @@ describe('OpenCode lifecycle', () => {
     }
   });
 
+  it('keeps OpenChamber credentials out of the managed OpenCode env', async () => {
+    const previousUiPassword = process.env.OPENCHAMBER_UI_PASSWORD;
+    const previousJwtSecret = process.env.OPENCODE_JWT_SECRET;
+    process.env.OPENCHAMBER_UI_PASSWORD = 'ui-password';
+    process.env.OPENCODE_JWT_SECRET = 'jwt-secret';
+    const child = createMockChild();
+    spawnMock.mockImplementationOnce(() => {
+      queueMicrotask(() => {
+        child.stdout.emit('data', 'opencode server listening on http://127.0.0.1:45678\n');
+      });
+      return child;
+    });
+
+    try {
+      const runtime = createRuntime({
+        getManagedOpenCodeShellEnvSnapshot: vi.fn(() => ({
+          PATH: '/home/user/.bun/bin:/usr/local/bin:/usr/bin',
+          OPENCHAMBER_UI_PASSWORD: 'ui-password-from-shell-profile',
+        })),
+      });
+      const server = await runtime.startOpenCode();
+      const [, , options] = spawnMock.mock.calls[0];
+
+      expect(options.env).not.toHaveProperty('OPENCHAMBER_UI_PASSWORD');
+      expect(options.env).not.toHaveProperty('OPENCODE_JWT_SECRET');
+      expect(options.env.OPENCODE_SERVER_PASSWORD).toBe('password');
+
+      await server.close();
+    } finally {
+      if (previousUiPassword === undefined) delete process.env.OPENCHAMBER_UI_PASSWORD;
+      else process.env.OPENCHAMBER_UI_PASSWORD = previousUiPassword;
+      if (previousJwtSecret === undefined) delete process.env.OPENCODE_JWT_SECRET;
+      else process.env.OPENCODE_JWT_SECRET = previousJwtSecret;
+    }
+  });
+
   it('adds managed OpenChamber tool environment without allowing it to replace launch invariants', async () => {
     const child = createMockChild();
     spawnMock.mockImplementationOnce(() => {

@@ -1,7 +1,7 @@
 import { readOpenCodeInfo, isSupportedOpenCodeVersion, requireOpenCodeV2, UnsupportedOpenCodeVersionError } from './compatibility.js';
 import { spawn, spawnSync } from 'node:child_process';
 import net from 'node:net';
-import { stripAppImageArgv0Leak } from '../inherited-env.js';
+import { stripAppImageArgv0Leak, stripHostSecrets } from '../inherited-env.js';
 import { registerManagedProcess, unregisterManagedProcess, reapOrphanedProcesses } from './managed-process-registry.js';
 import { applyProviderEnvAliases } from './provider-env-aliases.js';
 import { recordStartupPerformance } from './startup-performance.js';
@@ -760,13 +760,18 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
         timeout: managedStartupTimeoutMs,
         cwd: state.openCodeWorkingDirectory,
         shellEnvKeysCount: Object.keys(shellEnv).length,
-        env: stripAppImageArgv0Leak(applyProviderEnvAliases({
-          ...shellEnv,
-          ...process.env,
-          ...managedOpenCodeEnv,
-          PATH: envPath,
+        // OpenCode, its plugins and its tool commands all read this env, so
+        // none of OpenChamber's own credentials may pass through; the server
+        // password is the one OpenCode needs and is set back explicitly.
+        env: {
+          ...stripHostSecrets(stripAppImageArgv0Leak(applyProviderEnvAliases({
+            ...shellEnv,
+            ...process.env,
+            ...managedOpenCodeEnv,
+            PATH: envPath,
+          }))),
           OPENCODE_SERVER_PASSWORD: openCodePassword,
-        })),
+        },
       });
 
       if (!serverInstance || !serverInstance.url) {

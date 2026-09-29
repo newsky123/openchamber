@@ -13,8 +13,30 @@ import { createRequire } from 'node:module';
 import { existsSync } from 'node:fs';
 
 const POSIX_ENV_BINARIES = ['/usr/bin/env', '/bin/env'];
+/**
+ * Credentials OpenChamber holds for itself in `process.env`. A child that runs
+ * user, agent, or plugin code (a terminal shell, the managed OpenCode and every
+ * plugin and tool command inside it) must never inherit them.
+ */
+const HOST_SECRET_VARIABLES = Object.freeze([
+  'OPENCODE_SERVER_PASSWORD',
+  'OPENCHAMBER_UI_PASSWORD',
+  'OPENCODE_JWT_SECRET',
+]);
 /** Variables a PTY shell must never inherit from the OpenChamber host process. */
-const PTY_HOST_PRIVATE_VARIABLES = Object.freeze(['ARGV0', 'NODE_CHANNEL_FD']);
+const PTY_HOST_PRIVATE_VARIABLES = Object.freeze(['ARGV0', 'NODE_CHANNEL_FD', ...HOST_SECRET_VARIABLES]);
+
+/**
+ * Remove OpenChamber's own credentials from a mutable child env object.
+ * @param {Record<string, string | undefined>} env
+ * @returns {typeof env}
+ */
+export function stripHostSecrets(env) {
+  for (const name of HOST_SECRET_VARIABLES) {
+    delete env[name];
+  }
+  return env;
+}
 
 /**
  * Remove AppImage `ARGV0` from a mutable env object (or `process.env`).

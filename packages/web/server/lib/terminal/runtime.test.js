@@ -8,6 +8,15 @@ import { WebSocket } from 'ws';
 import { createTerminalRuntime } from './runtime.js';
 import { createTerminalWsControlFrame, readTerminalWsControlFrame } from './terminal-ws-protocol.js';
 
+/** The `env -u` prefix every POSIX PTY launch carries, in order. */
+const HOST_PRIVATE_UNSET_ARGS = [
+  '-u', 'ARGV0',
+  '-u', 'NODE_CHANNEL_FD',
+  '-u', 'OPENCODE_SERVER_PASSWORD',
+  '-u', 'OPENCHAMBER_UI_PASSWORD',
+  '-u', 'OPENCODE_JWT_SECRET',
+];
+
 function createResponse() {
   return {
     statusCode: 200,
@@ -391,7 +400,7 @@ describe('terminal runtime', () => {
       expect(harness.processes[0].options.env).not.toHaveProperty('ELECTRON_RUN_AS_NODE');
       if (process.platform !== 'win32') {
         expect(harness.processes[0].shell).toMatch(/\/env$/);
-        expect(harness.processes[0].args.slice(0, 5)).toEqual(['-u', 'ARGV0', '-u', 'NODE_CHANNEL_FD', expect.any(String)]);
+        expect(harness.processes[0].args.slice(0, HOST_PRIVATE_UNSET_ARGS.length + 1)).toEqual([...HOST_PRIVATE_UNSET_ARGS, expect.any(String)]);
       }
       harness.processes[0].emitData('\u001b[?2031h\u001b]10;?\u0007\u001b]11;?\u0007\u001b[0c');
       expect(harness.processes[0].writes).toEqual(['\u001b]10;rgb:1b1b/1b1b/1b1b\u001b\\', '\u001b]11;rgb:fafa/f8f8/f0f0\u001b\\', '\u001b[?1;2c']);
@@ -459,6 +468,35 @@ describe('terminal runtime', () => {
     }
   });
 
+  it('keeps OpenChamber credentials out of PTY child environments', async () => {
+    const secrets = {
+      OPENCODE_SERVER_PASSWORD: 'opencode-server-password',
+      OPENCHAMBER_UI_PASSWORD: 'ui-password',
+      OPENCODE_JWT_SECRET: 'jwt-secret',
+    };
+    const previous = Object.fromEntries(Object.keys(secrets).map((name) => [name, process.env[name]]));
+    Object.assign(process.env, secrets);
+    const harness = createHarness();
+    try {
+      const response = createResponse();
+      await harness.routes.post.get('/api/terminal/create')({ body: { sessionId: 'term-secrets', cwd: '/repo' } }, response);
+      expect(response.statusCode).toBe(200);
+      for (const name of Object.keys(secrets)) {
+        expect(harness.processes[0].options.env).not.toHaveProperty(name);
+      }
+      if (process.platform !== 'win32') {
+        // bun-pty merges the native environ back in, so the launch must unset them too.
+        expect(harness.processes[0].args.slice(0, HOST_PRIVATE_UNSET_ARGS.length)).toEqual(HOST_PRIVATE_UNSET_ARGS);
+      }
+    } finally {
+      for (const [name, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+      await harness.runtime.shutdown();
+    }
+  });
+
   it('lists available shells and uses the selected shell for create and restart', async () => {
     const executables = new Set(['/bin/zsh', '/bin/bash', '/bin/sh']);
     const harness = createHarness({
@@ -486,7 +524,7 @@ describe('terminal runtime', () => {
       expect(created.statusCode).toBe(200);
       if (process.platform !== 'win32') {
         expect(harness.processes[0].shell).toMatch(/\/env$/);
-        expect(harness.processes[0].args).toEqual(['-u', 'ARGV0', '-u', 'NODE_CHANNEL_FD', '/bin/zsh', '-l']);
+        expect(harness.processes[0].args).toEqual([...HOST_PRIVATE_UNSET_ARGS, '/bin/zsh', '-l']);
       } else {
         expect(harness.processes[0].shell).toBe('/bin/zsh');
         expect(harness.processes[0].args).toEqual(['-l']);
@@ -497,7 +535,7 @@ describe('terminal runtime', () => {
       expect(restarted.statusCode).toBe(200);
       if (process.platform !== 'win32') {
         expect(harness.processes[1].shell).toMatch(/\/env$/);
-        expect(harness.processes[1].args).toEqual(['-u', 'ARGV0', '-u', 'NODE_CHANNEL_FD', '/bin/bash', '-l']);
+        expect(harness.processes[1].args).toEqual([...HOST_PRIVATE_UNSET_ARGS, '/bin/bash', '-l']);
       } else {
         expect(harness.processes[1].shell).toBe('/bin/bash');
         expect(harness.processes[1].args).toEqual(['-l']);
@@ -826,7 +864,7 @@ describe('terminal runtime', () => {
       expect(response.body).toEqual({ sessionId: 'term-command', cols: 80, rows: 24, status: 'running', mode: 'command', purpose: { type: 'terminal' } });
       if (process.platform !== 'win32') {
         expect(harness.processes[0].shell).toMatch(/\/env$/);
-        expect(harness.processes[0].args).toEqual(['-u', 'ARGV0', '-u', 'NODE_CHANNEL_FD', '/bin/bash', '-l', '-i', '-c', 'printf ready']);
+        expect(harness.processes[0].args).toEqual([...HOST_PRIVATE_UNSET_ARGS, '/bin/bash', '-l', '-i', '-c', 'printf ready']);
       } else {
         expect(harness.processes[0].args).toEqual(['-l', '-i', '-c', 'printf ready']);
       }

@@ -319,6 +319,12 @@ be replaced by injected values. External OpenCode processes receive no
 OpenChamber tool injection. Managed launch env strips AppImage `ARGV0` before
 spawn so zsh-backed OpenCode tools do not rewrite child argv[0] to the AppImage
 path (#2588).
+Managed launch env also drops OpenChamber's own credentials
+(`OPENCHAMBER_UI_PASSWORD`, `OPENCODE_JWT_SECRET`) after every source is
+merged, shell snapshot included: OpenCode, its plugins and its tool commands
+all read that env. `OPENCODE_SERVER_PASSWORD` is set back explicitly because
+`opencode serve` reads it; OpenCode itself leaves it in its env in serve mode,
+so plugins and tool commands can still read that one.
 
 Before spawn, `applyProviderEnvAliases` fills unset Google credential aliases
 from any present sibling (`GOOGLE_GENERATIVE_AI_API_KEY`, `GOOGLE_API_KEY`,
