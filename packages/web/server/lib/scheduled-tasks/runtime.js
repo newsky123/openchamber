@@ -1,3 +1,4 @@
+import { fetchOpenCode as fetch } from '../opencode/embedded-runtime.js';
 import { OpenCode } from '@opencode/client';
 import { DateTime } from 'luxon';
 import { CronExpressionParser } from 'cron-parser';

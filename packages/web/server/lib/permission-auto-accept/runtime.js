@@ -1,3 +1,4 @@
+import { fetchOpenCode as fetch } from '../opencode/embedded-runtime.js';
 import { z } from 'zod';
 import { PERMISSION_MODES, isAutoAnsweringMode, isPermissionMode, toPermissionMode } from './modes.js';
 

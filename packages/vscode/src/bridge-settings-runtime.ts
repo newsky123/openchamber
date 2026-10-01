@@ -1,3 +1,4 @@
+import { fetchOpenCode as fetch } from '../../web/server/lib/opencode/embedded-runtime.js';
 import { OPENCODE_CONFIG_DIR } from './opencodeConfigPaths';
 import * as fs from 'fs';
 import * as os from 'os';

@@ -1,3 +1,4 @@
+import { fetchOpenCode as fetch } from './embedded-runtime.js';
 import { readOpenCodeInfo, isSupportedOpenCodeVersion } from './compatibility.js';
 import express from 'express';
 import { createProjectIdFromPath } from '../projects/project-id.js';

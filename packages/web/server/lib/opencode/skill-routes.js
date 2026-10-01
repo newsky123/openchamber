@@ -1,3 +1,4 @@
+import { fetchOpenCode as fetch } from './embedded-runtime.js';
 import { OpenCode } from '@opencode/client';
 import { buildAppliedResponse } from './config-mutation-response.js';
 import { OPENCODE_CONFIG_DIR } from './shared.js';

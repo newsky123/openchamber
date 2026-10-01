@@ -1,5 +1,6 @@
 import { installOpenCodeV2, supportsOpenCodeV2Install } from './lib/opencode/v2-install.js';
-import { describeOpenCodeCompatibility, readOpenCodeCliVersion, readExternalOpenCodeVersion } from './lib/opencode/compatibility.js';
+import { describeOpenCodeCompatibility, readExternalOpenCodeVersion } from './lib/opencode/compatibility.js';
+import { createEmbeddedOpenCode, EMBEDDED_OPENCODE_VERSION } from './lib/opencode/embedded-runtime.js';
 import 'reflect-metadata';
 import express from 'express';
 import compression from 'compression';
@@ -1204,6 +1205,7 @@ const serverUtilsRuntime = createServerUtilsRuntime({
   getUpstreamStallTimeoutMs,
   getUiNotificationClients: () => uiNotificationClients,
   getOpenCodePort: () => openCodePort,
+  getOpenCodeBaseUrl: () => openCodeBaseUrl,
   setOpenCodePortState: (value) => {
     openCodePort = value;
   },
@@ -1341,6 +1343,7 @@ Object.defineProperties(openCodeLifecycleState, {
 });
 
 const openCodeLifecycleRuntime = createOpenCodeLifecycleRuntime({
+  startEmbeddedOpenCode: createEmbeddedOpenCode,
   state: openCodeLifecycleState,
   env: {
     ENV_CONFIGURED_OPENCODE_PORT,
@@ -1439,13 +1442,11 @@ const getOpenCodeCompatibility = async () => {
     const version = await readExternalOpenCodeVersion(base, getOpenCodeAuthHeaders()).catch(() => null);
     return describeOpenCodeCompatibility(version, 'external', false);
   }
-  const binary = ensureOpencodeCliEnv();
-  const installation = isBundledOpenCodeCliPath(binary) ? 'bundled' : 'managed';
-  const version = await readOpenCodeCliVersion(resolveManagedOpenCodeLaunchSpec(binary)).catch(() => null);
-  return describeOpenCodeCompatibility(version, installation, supportsOpenCodeV2Install());
+  return describeOpenCodeCompatibility(EMBEDDED_OPENCODE_VERSION, 'bundled', false);
 };
 
 const getOpenCodeUpgradeCapability = () => {
+  if (!isExternalOpenCode && !ENV_SKIP_OPENCODE_START) return { supported: false, manager: 'openchamber', reason: 'bundled' };
   const activeBinary = lastOpenCodeLaunchDiagnostics?.sourceBinary
     || lastOpenCodeLaunchDiagnostics?.binary
     || resolvedOpencodeBinary;
@@ -2080,7 +2081,7 @@ async function main(options = {}) {
         : null;
       return {
         openCodePort,
-        openCodeRunning: Boolean(openCodePort && isOpenCodeReady && !isRestartingOpenCode),
+        openCodeRunning: Boolean((openCodeBaseUrl || openCodePort) && isOpenCodeReady && !isRestartingOpenCode),
         openCodeSecureConnection: isOpenCodeConnectionSecure(),
         openCodeAuthSource: openCodeAuthSource || null,
         openCodeApiPrefix: '',

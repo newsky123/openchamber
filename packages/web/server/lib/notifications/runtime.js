@@ -1,3 +1,4 @@
+import { fetchOpenCode as fetch } from '../opencode/embedded-runtime.js';
 import { unwrapOpenCodeResponse } from '../opencode/response-envelope.js';
 import { createSessionActivityProbe } from '../opencode/session-activity.js';
 import { isEnterpriseMode } from '../enterprise-mode.js';

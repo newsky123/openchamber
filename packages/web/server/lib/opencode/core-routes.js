@@ -1,3 +1,4 @@
+import { fetchOpenCode as fetch } from './embedded-runtime.js';
 import { buildExternalManualRestartResponse } from './config-mutation-response.js';
 import { ThemeImportStorageError } from './theme-runtime.js';
 import { registerThemeCatalogRoutes } from './theme-catalog.js';

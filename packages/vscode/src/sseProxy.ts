@@ -1,3 +1,4 @@
+import { fetchOpenCode as fetch } from '../../web/server/lib/opencode/embedded-runtime.js';
 import type { OpenCodeManager } from './opencode';
 import { waitForApiUrl } from './opencode-ready';
 

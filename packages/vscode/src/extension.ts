@@ -1,3 +1,4 @@
+import { fetchOpenCode as fetch } from '../../web/server/lib/opencode/embedded-runtime.js';
 import * as vscode from 'vscode';
 import { ChatViewProvider } from './ChatViewProvider';
 import { SessionEditorPanelProvider } from './SessionEditorPanelProvider';

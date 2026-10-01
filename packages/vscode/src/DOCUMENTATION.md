@@ -6,6 +6,15 @@ This document describes backend runtime modules used by the VS Code extension br
 
 Keep `bridge.ts` as a thin orchestration layer that delegates message handling to cohesive domain runtimes while preserving API behavior.
 
+## Local OpenCode
+
+`opencode.ts` uses the shared in-process OpenCode 2.0.21 engine and dispatcher.
+External URLs retain HTTP and auth. Local startup needs no CLI or port, persists
+sessions in the existing OpenCode database, and upgrades with OpenChamber.
+The managed launch environment remains available to the credential reader.
+Unscoped calls use global extension storage without changing host cwd.
+See `packages/web/server/lib/opencode/DOCUMENTATION.md` for teardown and storage.
+
 ## Runtime modules
 
 - `bridge.ts`
@@ -28,9 +37,9 @@ Keep `bridge.ts` as a thin orchestration layer that delegates message handling t
 - `owned-process.ts`
   - Owns background child termination shared by Git and managed OpenCode. POSIX children have a separate process group, which receives SIGKILL after the grace period or root exit so a SIGTERM-resistant descendant cannot survive. Windows enumerates and terminates the tree before losing its root, using an asynchronous hidden `taskkill` invocation. Completion waits for stdio closure; failed termination remains an error.
 
-- `managed-opencode-process.ts` and `opencode.ts`
+- Legacy `managed-opencode-process.ts` (migration cleanup and process-tree tests)
   - The process handle and shared registry entry exist from spawn, before readiness. Startup timeout, malformed output, and cancellation terminate the child before the attempt settles. Registry removal follows confirmed termination. Startup diagnostics retain a bounded output tail; ready processes keep draining both streams.
-  - Manager operations run in order. Stop cancels in-flight readiness/health probes and invalidates older queued starts/restarts. A later explicit start can run after stop. Startup passes an explicit cwd to the child without changing the extension host's cwd.
+  - Embedded manager operations run in order. Stop cancels in-flight readiness/health probes and invalidates older queued starts/restarts. A later explicit start can run after stop. The embedded adapter supplies the neutral directory without changing the extension host's cwd.
   - Shutdown targets owned processes rather than whichever process happens to listen on a remembered port. External OpenCode receives no spawn or termination request.
   - `bridge-git-process-runtime.test.ts` and `managed-opencode-process.test.ts` use real subprocesses for repeated deadlines, signal exits, stdin EOF, large stderr, deactivation, startup failure, and resistant descendants. The manager was also exercised in an isolated macOS VS Code 1.137.0 extension host with a controlled server fixture. Before the fix, two restarts left two orphaned tool processes beside the active server and its tool. After the fix, only the active pair remained, and stop removed it. The complete fixed scenario created eight processes across startup, restarts, and cancellation, with none surviving. Native Windows process-tree behavior remains unverified on the macOS test host.
 

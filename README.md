@@ -79,7 +79,7 @@ Run a prompt once, daily, weekly, or on a cron schedule. Scheduled tasks can use
 
 ### Desktop for macOS, Windows, and Linux
 
-Download the latest release from [GitHub Releases](https://github.com/openchamber/openchamber/releases/latest). Desktop bundles the matching OpenCode CLI, so no separate OpenCode installation is required.
+Download the latest release from [GitHub Releases](https://github.com/openchamber/openchamber/releases/latest). Desktop runs the matching embedded OpenCode engine, so no separate OpenCode installation is required.
 
 Linux releases are available as x86_64 and ARM64 AppImages. Make the downloaded AppImage executable and keep it in a writable location for in-app updates:
 
@@ -96,7 +96,7 @@ Install [OpenChamber from the Visual Studio Marketplace](https://marketplace.vis
 
 ### CLI for Web and PWA
 
-Requires Node.js 22+. CLI/Web and VS Code use your installed [OpenCode CLI](https://opencode.ai).
+CLI/Web require Bun 1.4.2+ or Node.js 24+. CLI/Web and VS Code include the embedded OpenCode engine and persist conversations in the existing OpenCode SQLite database.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/openchamber/openchamber/main/scripts/install.sh | bash

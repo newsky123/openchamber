@@ -1,3 +1,4 @@
+import { fetchOpenCode as fetch } from '../opencode/embedded-runtime.js';
 // Background session assistance. Only live idle events arm generation; there
 // is no backfill. A new turn deletes the assist this process wrote; clients
 // retire any other payload older than the session's `time.idle`.
@@ -146,7 +147,7 @@ export const createSessionAssistRuntime = ({
     };
     if (!targets.recap && !targets.suggestion) return;
     const baseUrl = buildOpenCodeUrl('/', '').replace(/\/$/, '');
-    const client = OpenCode.make({
+    const client = OpenCode.make({ fetch,
       baseUrl,
       headers: {
         ...getOpenCodeAuthHeaders(),

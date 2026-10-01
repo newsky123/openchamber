@@ -1,3 +1,4 @@
+import { fetchOpenCode as fetch } from './embedded-runtime.js';
 /**
  * Whether a session's turn has really ended.
  *

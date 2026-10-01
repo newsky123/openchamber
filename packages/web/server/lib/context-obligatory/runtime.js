@@ -1,3 +1,4 @@
+import { fetchOpenCode as fetch } from '../opencode/embedded-runtime.js';
 import { unwrapOpenCodeResponse } from '../opencode/response-envelope.js';
 const FETCH_TIMEOUT_MS = 15_000;
 const MESSAGE_FETCH_LIMIT = 20;

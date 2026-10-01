@@ -1,3 +1,4 @@
+import { fetchOpenCode as fetch } from '../opencode/embedded-runtime.js';
 /**
  * "In work": Jev moves a session into work when real work starts in it, and
  * says when a turn looks like the end of that work. The user closes; this
@@ -122,7 +123,7 @@ export function createSessionWorkRuntime({
     const headers = { ...getOpenCodeAuthHeaders() };
     // v2 scopes by header and rejects non-ASCII header values.
     if (directory) headers['x-opencode-directory'] = encodeURIComponent(directory);
-    return OpenCode.make({ baseUrl: buildOpenCodeUrl('/', '').replace(/\/$/, ''), headers });
+    return OpenCode.make({ fetch, baseUrl: buildOpenCodeUrl('/', '').replace(/\/$/, ''), headers });
   };
 
   const readPages = (client, sessionId, signal) => ({ limit, cursor }) => client.message.list(

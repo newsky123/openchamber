@@ -1,3 +1,4 @@
+import { fetchOpenCode as fetch } from '../opencode/embedded-runtime.js';
 import { OpenCode } from '@opencode/client';
 
 /**
@@ -18,5 +19,5 @@ export const createOpenCodeClient = ({ baseUrl, headers, directory }) => OpenCod
   baseUrl,
   headers: { ...headers, ...buildDirectoryHeaders(directory) },
   // Resolved per call so a test (or a runtime that swaps the global) is honoured.
-  fetch: (...args) => globalThis.fetch(...args),
+  fetch,
 });

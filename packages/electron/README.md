@@ -185,7 +185,7 @@ Running a packaged Linux AppImage requires FUSE (`libfuse.so.2`, typically `libf
 
 Desktop clears AppImage `ARGV0` from `process.env` before probing the login shell and starting the in-process server. Leaving it set makes zsh rewrite argv[0] for integrated-terminal and managed-OpenCode child commands to the AppImage path.
 
-The AppImage launcher also prepends its own directories to `PATH`, `LD_LIBRARY_PATH`, `GSETTINGS_SCHEMA_DIR` and `XDG_DATA_DIRS`, leaving a trailing `:` when a variable was unset. Desktop keeps them in its own process and removes them only from the integrated terminal, the managed OpenCode server, and the git environment the server builds (`stripAppImageLauncherEnv` in `packages/web/server/lib/inherited-env.js`), so user tools, agent commands and git hooks started from those paths see the user's values (#4177). `XDG_DATA_DIRS` keeps the standard system directories the launcher adds around the user's value.
+The AppImage launcher also prepends its own directories to `PATH`, `LD_LIBRARY_PATH`, `GSETTINGS_SCHEMA_DIR` and `XDG_DATA_DIRS`, leaving a trailing `:` when a variable was unset. The integrated terminal and git environment remove those launcher entries through `stripAppImageLauncherEnv` in `packages/web/server/lib/inherited-env.js`. The embedded engine applies the same sanitized managed values, including variable removals, while it owns its runtime and restores still-owned host values on shutdown. User tools, agent commands and git hooks therefore keep the published cleanup behavior (#4177). `XDG_DATA_DIRS` keeps the standard system directories the launcher adds around the user's value.
 
 Linux updates are supported only when the packaged app is running from a writable AppImage. Update checks, downloads, and installation report an actionable error when `APPIMAGE` is missing, invalid, or read-only; a missing release feed (`latest-linux.yml` 404 before the first Linux publish) is treated as “no update available”. Authenticated Web clients connected to the embedded Desktop Host use this same `electron-updater` check, download, and restart flow rather than a package-manager command. macOS and Windows updater behavior is unchanged. Release builds keep `latest-linux.yml` (x64) and `latest-linux-arm64.yml` separate and validate each manifest against its AppImage before upload. Linux AppImages download full updates (no `.blockmap` differential channel yet).
 
@@ -202,6 +202,11 @@ On Windows and Linux, the General setting persisted as `desktopMinimizeToTrayEna
 The macOS menu bar item is enabled by default and can be disabled in General settings. The setting applies after restart. While disabled, Desktop skips the native tray controller, tray-specific subscriptions, polling, and quota refresh. Dock badges remain independent: unread activity, session membership, and badge preferences still update the Dock through the shared IPC command. Turning off the Dock badge clears its count without enabling the menu bar item.
 
 ## Bundled OpenCode CLI
+
+Managed Desktop runs the embedded 2.0.21 core/router from the web package in the
+Electron host. The staged CLI remains for standalone tooling; local startup does
+not use it. The persistent-terminal helper is unpacked from ASAR and selected by
+the embedded runtime. Engine upgrades ship with OpenChamber.
 
 Packaged Desktop builds include the official OpenCode CLI release pinned by `opencodeCli.version` in `packages/electron/package.json` (OpenChamber requires OpenCode 2.x). OpenCode 2.x ships on npm rather than as GitHub release assets, so `prepare:opencode-cli` downloads the platform package tarball (`@opencode/cli-<os>-<arch>`, the same one OpenCode's own installer uses), caches it under `packages/electron/.cache/opencode-cli`, stages `opencode` or `opencode.exe` into `resources/opencode-cli`, and verifies `opencode --version` before packaging. Re-running the step is fast when the staged binary already matches the pinned version.
 

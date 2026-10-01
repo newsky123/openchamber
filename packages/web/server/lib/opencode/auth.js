@@ -1,3 +1,4 @@
+import { fetchOpenCode as fetch } from './embedded-runtime.js';
 /**
  * READ-ONLY view of OpenCode's provider credentials, shared by the web server
  * and the VS Code extension host.
@@ -58,7 +59,7 @@ export const projectEnvironmentKeys = (integrations, environment) => {
  * a managed OpenCode was started with, or null for an external one.
  */
 export const openCodeCredentialSource = ({ buildOpenCodeUrl, getOpenCodeAuthHeaders, getLaunchEnvironment = () => null }) => {
-  const client = () => OpenCode.make({
+  const client = () => OpenCode.make({ fetch,
     baseUrl: buildOpenCodeUrl('', '').replace(/\/+$/, ''),
     headers: { ...getOpenCodeAuthHeaders() },
   });

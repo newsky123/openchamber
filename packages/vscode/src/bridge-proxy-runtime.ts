@@ -1,3 +1,4 @@
+import { fetchOpenCode as fetch } from '../../web/server/lib/opencode/embedded-runtime.js';
 import type { BridgeContext, BridgeResponse } from './bridge';
 import { waitForApiUrl } from './opencode-ready';
 import {

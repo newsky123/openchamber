@@ -1,5 +1,34 @@
 # OpenCode Module Documentation
 
+## Embedded engine
+
+Managed local Web/Desktop and VS Code run OpenCode 2.0.21 core and router in the
+host process through `embedded-runtime.js`. The official `createEmbeddedRoutes`
+assembly is the same one used by `@opencode/sdk`; it opens no listener and starts
+no OpenCode CLI child. `http://opencode.local` identifies the in-memory transport.
+Only OpenCode calls use its dispatcher. External servers keep HTTP and auth.
+
+The UI API, SSE events, overlays, background clients, credential API and message
+search retain their current contracts. Engine versions upgrade with OpenChamber.
+Unscoped calls retain Web's configured cwd/home or VS Code's extension storage
+as their neutral directory; explicit project locations take precedence without
+changing the host cwd.
+
+The engine opens persistent SQLite at `OPENCODE_DB` (relative paths beneath the
+OpenCode data directory), or `XDG_DATA_HOME/opencode/opencode.db`, falling back
+to `~/.local/share/opencode/opencode.db`. Memory-only storage is rejected. The
+engine owns schema migrations, messages and inbox, while existing OpenChamber
+archive, metadata and search stores remain in place. Startup retains official
+recovery of suspended executions. Shutdown aborts and drains owned streams before
+releasing services. The published persistent-terminal helper is resolved explicitly,
+including its unpacked path in Electron.
+Managed environment sanitization retains the published AppImage launcher cleanup,
+including removed variables, and restores values still owned by the closing engine.
+
+Web/CLI require Bun 1.4.2+ or Node 24+. VS Code stages production dependencies,
+native/WASM assets and lowered resource-management syntax for Node 22.16+.
+The universal VSIX includes optional native binaries for supported platforms.
+
 ## Purpose
 This module provides OpenCode server integration utilities for the web server runtime, including configuration management and provider authentication.
 
@@ -10,9 +39,9 @@ This module provides OpenCode server integration utilities for the web server ru
 - `packages/web/server/lib/opencode/cli-options.js`: CLI/environment option parsing for server startup arguments.
 - `packages/web/server/lib/opencode/cli-entry-runtime.js`: CLI entrypoint runtime that detects direct execution, parses CLI options, and starts server bootstrap.
 - `packages/web/server/lib/opencode/routes.js`: OpenCode/provider settings and auth-related route registration.
-- `packages/web/server/lib/opencode/v1-migration-topup.js`: re-arms OpenCode's own V1 -> V2 session import for V1 sessions changed by 1.x after the last completed import; runs only before a managed spawn. See "v1-migration-topup.js" below.
+- `packages/web/server/lib/opencode/v1-migration-topup.js`: re-arms OpenCode's own V1 -> V2 session import for V1 sessions changed by 1.x after the last completed import; runs before managed engine startup. See "v1-migration-topup.js" below.
 - `packages/web/server/lib/opencode/lifecycle.js`: OpenCode process lifecycle runtime (startup, restart, readiness, health monitoring). After readiness it warms the last-used directory only (first entry of the `getWarmupDirectories` dep, best-effort) because OpenCode initializes each directory lazily on first request and that cost would otherwise be paid by the user's first interactive session open. It warms no other projects: on OpenCode 2 the first directory-scoped read boots that location's whole MCP fleet.
-- `packages/web/server/lib/opencode/provider-env-aliases.js`: mirrors known provider credential env aliases into the managed OpenCode process environment (for example `GEMINI_API_KEY` → `GOOGLE_GENERATIVE_AI_API_KEY`) so OpenCode connection detection and the upstream AI SDK agree on the same key names. Canonical implementation shared by web lifecycle and the VS Code managed spawn path (`packages/vscode/src/provider-env-aliases.ts` re-exports this module).
+- `packages/web/server/lib/opencode/provider-env-aliases.js`: mirrors known provider credential env aliases into the managed OpenCode process environment (for example `GEMINI_API_KEY` → `GOOGLE_GENERATIVE_AI_API_KEY`) so OpenCode connection detection and the upstream AI SDK agree on the same key names. Canonical implementation shared by web lifecycle and the VS Code manager (`packages/vscode/src/provider-env-aliases.ts` re-exports this module).
 - `packages/web/server/lib/opencode/env-runtime.js`: OpenCode CLI/binary resolution and shell environment runtime.
 - `packages/web/server/lib/opencode/env-config.js`: OpenCode-related environment variable parsing and validation (host/port/hostname).
 - `packages/web/server/lib/opencode/hmr-state-runtime.js`: HMR-persistent runtime state initialization, auth-state bootstrap, and HMR sync helpers.
@@ -236,10 +265,9 @@ Hard rules, verified against v2.0.8 (the completion stamp against v2.0.16)
 
 `cli-upgrade.js` runs the host-resolved executable and wrapper arguments with
 `upgrade`, without a shell or client-supplied arguments. OpenCode chooses the
-installer. Web, hosted mobile, Capacitor, and Desktop with a separately installed
-CLI use this server path. VS Code uses the same executor from its extension host.
-Bundled Desktop, external URL connections, and unavailable CLIs remain
-unsupported at the host boundary.
+installer. This executor remains for legacy CLI integrations. Current managed
+hosts upgrade the embedded engine with OpenChamber; external servers own their
+upgrades. Neither advertises a local CLI upgrade capability.
 
 An upgrade leaves the current server running. The toast's Reload action restarts
 it using the installed version. Failed installations return an error and can be
@@ -250,14 +278,11 @@ limit, and the VS Code bridge does not apply its usual 30-second request timeout
 
 ### Migrating an installed v1 CLI
 
-`GET /api/opencode/compatibility` reads the local CLI version without starting
-its server, or probes an external server's JSON version contract (`/api/info`,
-then v1's `/global/health` even when the first probe fails or hangs). When
-`OPENCODE_HOST`/`OPENCODE_PORT` points at a server that identifies as v1 or a
-2.x below the minimum, startup attaches to it as external and not ready rather
-than spawning a managed instance, so this check reports its version. A confirmed
-managed v1 CLI on macOS, Linux or Windows (x64/arm64) advertises `canInstall`;
-bundled binaries and external connections do not.
+`GET /api/opencode/compatibility` reports the embedded version for managed
+local hosts, or probes an external server's JSON version contract. External
+incompatible servers stay external and not ready. Embedded hosts and external
+connections do not advertise `canInstall`. The installer below is retained for
+legacy CLI-managed integrations.
 
 `POST /api/opencode/install-v2` rechecks that capability and shares one operation
 across concurrent clients. `v2-install.js` resolves a validated stable v2
@@ -350,6 +375,8 @@ Transport-triggered health checks share the periodic monitor's failure accountin
 
 Managed health failures are classified as `timeout`, `connection_refused`, `connection_reset`, `invalid_response`, or `error`. The lifecycle retains the latest counted failure with a bounded detail string and source. Managed process wrappers continue capturing a sanitized, bounded stderr tail after readiness and retain exit code/signal. Before replacing a managed process, lifecycle snapshots the reason, latest health failure, process diagnostics/aliveness, busy-session count, and timestamp into `lastOpenCodeRestartDiagnostics`; successful startup does not clear this snapshot, and `/health` exposes it for post-restart diagnosis without process environment or credentials.
 
+The following process ownership rules cover the legacy CLI utility and its
+regression tests; current managed hosts use embedded teardown above.
 Managed process ownership starts at spawn. The registry and runtime process
 handle include children that have not announced readiness yet, so shutdown can
 stop an in-flight startup. Readiness timeout, malformed startup output, and

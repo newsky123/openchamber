@@ -1,3 +1,6 @@
+import { fetchOpenCode as fetch, EMBEDDED_OPENCODE_ORIGIN } from './embedded-runtime.js';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import http from 'node:http';
 import https from 'node:https';
 
@@ -834,7 +837,7 @@ export const registerOpenCodeProxy = (app, deps) => {
     return (
       (!runtimeState.isOpenCodeReady && (runtimeState.openCodeNotReadySince === 0 || waitElapsed < OPEN_CODE_READY_GRACE_MS)) ||
       runtimeState.isRestartingOpenCode ||
-      !runtimeState.openCodePort
+      (!runtimeState.openCodePort && !runtimeState.openCodeBaseUrl)
     );
   };
   const classifyReadinessRoute = (requestPath) => {
@@ -1072,5 +1075,34 @@ export const registerOpenCodeProxy = (app, deps) => {
   // v1's interactive provider/MCP OAuth callbacks are gone: v2 runs provider
   // connection through `/api/integration/*`, which answers immediately and
   // needs no special deadline.
-  app.use('/api', apiProxy);
+  app.use('/api', async (req, res, next) => {
+    if (getRuntime().openCodeBaseUrl !== EMBEDDED_OPENCODE_ORIGIN) return apiProxy(req, res, next);
+    const controller = new AbortController();
+    const abort = () => { if (!res.writableFinished) controller.abort(); };
+    res.once('close', abort);
+    try {
+      const headers = new Headers();
+      for (const [key, value] of Object.entries(req.headers)) {
+        if (value !== undefined && !['host', 'connection', 'content-length', 'transfer-encoding', 'authorization'].includes(key)) {
+          const text = Array.isArray(value) ? value.join(', ') : value;
+          headers.set(key, key === 'x-opencode-directory' && /[^\p{ASCII}]/u.test(text) ? encodeURIComponent(text) : text);
+        }
+      }
+      const body = serializeParsedBody(req, { getHeader: (key) => headers.get(key) });
+      const hasBody = req.method !== 'GET' && req.method !== 'HEAD'
+        && (body !== null || Number(req.headers['content-length']) > 0 || req.headers['transfer-encoding']);
+      const requestInit = { method: req.method, headers, signal: controller.signal };
+      if (hasBody) { requestInit.body = body ?? Readable.toWeb(req); requestInit.duplex = 'half'; }
+      const response = await fetch(new URL(`/api${req.url === '/' ? '' : req.url}`, EMBEDDED_OPENCODE_ORIGIN), requestInit);
+      if (controller.signal.aborted || res.writableEnded) { await response.body?.cancel(); return; }
+      res.status(response.status);
+      for (const [key, value] of response.headers) {
+        if (shouldForwardProxyResponseHeader(key)) res.setHeader(key, value);
+      }
+      if (response.body) await pipeline(Readable.fromWeb(response.body), res, { signal: controller.signal });
+      else res.end();
+    } catch (error) {
+      if (!controller.signal.aborted) sendProxyErrorResponse(res, isProxyTimeoutError(error) ? 504 : 503);
+    } finally { res.off('close', abort); }
+  });
 };

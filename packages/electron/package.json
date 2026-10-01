@@ -59,7 +59,8 @@
     "appId": "dev.openchamber.desktop",
     "productName": "OpenChamber",
     "asarUnpack": [
-      "node_modules/@openchamber/web/server/built-in-extensions/**/*"
+      "node_modules/@openchamber/web/server/built-in-extensions/**/*",
+      "**/node_modules/@opencode-ai/pty-*/**/*"
     ],
     "files": [
       "dist-bundle/entry.mjs",

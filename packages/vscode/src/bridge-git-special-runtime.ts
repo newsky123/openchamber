@@ -1,3 +1,4 @@
+import { fetchOpenCode as fetch } from '../../web/server/lib/opencode/embedded-runtime.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -37,7 +38,7 @@ const BRIDGE_GIT_MODEL_CATALOG_CACHE_TTL_MS = 30 * 1000;
 let bridgeGitModelCatalogCache: Set<string> | null = null;
 let bridgeGitModelCatalogCacheAt = 0;
 
-const createBridgeGitClient = (apiUrl: string, authHeaders?: Record<string, string>): OpenCodeClient => OpenCode.make({
+const createBridgeGitClient = (apiUrl: string, authHeaders?: Record<string, string>): OpenCodeClient => OpenCode.make({ fetch,
   baseUrl: apiUrl.replace(/\/+$/, ''),
   headers: authHeaders || {},
 });

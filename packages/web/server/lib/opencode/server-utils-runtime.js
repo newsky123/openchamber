@@ -1,3 +1,4 @@
+import { fetchOpenCode as fetch } from './embedded-runtime.js';
 import { registerOpenCodeProxy } from './proxy.js';
 import { pathLooksUserConfigured, mergePathValues } from './path-utils.js';
 
@@ -16,6 +17,7 @@ export const createServerUtilsRuntime = (dependencies) => {
     getUpstreamStallTimeoutMs,
     getUiNotificationClients,
     getOpenCodePort,
+    getOpenCodeBaseUrl = () => null,
     setOpenCodePortState,
     syncToHmrState,
     markOpenCodeNotReady,
@@ -52,15 +54,15 @@ export const createServerUtilsRuntime = (dependencies) => {
   };
 
   const waitForOpenCodePort = async (timeoutMs = 15000) => {
-    if (getOpenCodePort() !== null) {
-      return getOpenCodePort();
+    if (getOpenCodePort() !== null || getOpenCodeBaseUrl()) {
+      return getOpenCodeBaseUrl() || getOpenCodePort();
     }
 
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 50));
-      if (getOpenCodePort() !== null) {
-        return getOpenCodePort();
+      if (getOpenCodePort() !== null || getOpenCodeBaseUrl()) {
+        return getOpenCodeBaseUrl() || getOpenCodePort();
       }
     }
 
@@ -182,7 +184,7 @@ export const createServerUtilsRuntime = (dependencies) => {
   };
 
   const fetchArraySnapshot = async (route, invalidMessage) => {
-    if (!getOpenCodePort()) {
+    if (!getOpenCodePort() && !getOpenCodeBaseUrl()) {
       throw new Error('OpenCode port is not available');
     }
 

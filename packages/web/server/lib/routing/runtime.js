@@ -1,3 +1,4 @@
+import { fetchOpenCode as fetch } from '../opencode/embedded-runtime.js';
 /**
  * Owns Jev routing at runtime: which classification provider answers, whether
  * Auto is ready, which model and agent a send that selected `openchamber/auto`
@@ -217,7 +218,7 @@ export function createRoutingRuntime({
     // v2 scopes by header and rejects non-ASCII header values.
     const scope = z.string().trim().min(1).safeParse(directory);
     if (scope.success) headers['x-opencode-directory'] = encodeURIComponent(scope.data);
-    return OpenCode.make({ baseUrl: buildOpenCodeUrl('/', '').replace(/\/$/, ''), headers });
+    return OpenCode.make({ fetch, baseUrl: buildOpenCodeUrl('/', '').replace(/\/$/, ''), headers });
   };
 
   const readHistory = async ({ sessionId, directory }) => {
