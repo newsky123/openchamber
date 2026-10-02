@@ -32,7 +32,7 @@ Plus everything from the shared OpenChamber UI: branchable timeline, smart tool 
 | `OpenChamber: Run on Several Models` | Open a new tab set up to run one prompt on several models |
 | `OpenChamber: Open Session in Editor` | Open current or new session in an editor tab |
 | `OpenChamber: Settings` | Open extension settings |
-| `OpenChamber: Restart API Connection` | Restart the OpenCode API process |
+| `OpenChamber: Restart API Connection` | Restart the embedded OpenCode engine |
 | `OpenChamber: Show OpenCode Status` | Debug info for development or bug reports |
 
 ### Right-click menu
@@ -50,12 +50,12 @@ Select code in the editor, right-click, and find the **OpenChamber** submenu:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `openchamber.apiUrl` | _(empty)_ | URL of an external OpenCode API server. Leave empty to auto-start a local instance. Authenticates with `OPENCODE_PASSWORD` (or the legacy `OPENCODE_SERVER_PASSWORD`); when both are unset and the URL points at OpenCode's background service (`opencode service start`), the service's own password is used. |
-| `openchamber.opencodeBinary` | _(empty)_ | Absolute path to the `opencode` CLI binary. Useful when PATH lookup fails. Requires window reload to apply. |
+| `openchamber.apiUrl` | _(empty)_ | URL of an external OpenCode API server. Leave empty to run the embedded engine in the extension host. Authenticates with `OPENCODE_PASSWORD` (or the legacy `OPENCODE_SERVER_PASSWORD`); when both are unset and the URL points at OpenCode's background service (`opencode service start`), the service's own password is used. |
+| `openchamber.opencodeBinary` | _(empty)_ | Optional CLI path for retrieving an external background service's password. The embedded engine does not use it. |
 
 ## Requirements
 
-- [OpenCode CLI](https://opencode.ai) installed and available in PATH (or set `OPENCODE_BINARY` env var)
+- VS Code 1.103+ with a Node 22.16+ extension host; the embedded OpenCode engine is included.
 - VS Code 1.85+
 
 <details>

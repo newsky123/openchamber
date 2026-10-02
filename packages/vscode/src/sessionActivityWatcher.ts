@@ -1,3 +1,4 @@
+import { fetchOpenCode as fetch } from '../../web/server/lib/opencode/embedded-runtime.js';
 import { OpenCode, type OpenCodeClient, type OpenCodeEvent } from '@opencode/client';
 import type { OpenCodeManager } from './opencode';
 
@@ -26,7 +27,7 @@ const clearGlobalEventWatcherRetry = (): void => {
   globalEventWatcherRetryTimer = null;
 };
 
-const createActivityClient = (manager: OpenCodeManager, baseUrl: string): OpenCodeClient => OpenCode.make({
+const createActivityClient = (manager: OpenCodeManager, baseUrl: string): OpenCodeClient => OpenCode.make({ fetch,
   baseUrl: baseUrl.replace(/\/+$/, ''),
   headers: manager.getOpenCodeAuthHeaders(),
 });

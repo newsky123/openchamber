@@ -1,3 +1,4 @@
+import { fetchOpenCode as fetch } from '../opencode/embedded-runtime.js';
 // Server-owned message queue: messages the user queued while a session was
 // busy, delivered by the web server the moment the session goes idle. The
 // queue lives here, not in the browser, so closing the tab, locking the phone,

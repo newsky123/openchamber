@@ -1,3 +1,4 @@
+import { fetchOpenCode as fetch } from '../opencode/embedded-runtime.js';
 import { OpenCode } from '@opencode/client';
 
 // The running OpenCode instance is the only transport this module has. It is
@@ -46,7 +47,7 @@ export function getSmallModelClient(directory) {
   if (typeof directory === 'string' && directory.trim()) {
     headers['x-opencode-directory'] = encodeURIComponent(directory.trim());
   }
-  return OpenCode.make({ baseUrl, headers });
+  return OpenCode.make({ fetch, baseUrl, headers });
 }
 
 const MODEL_CACHE_TTL_MS = 30_000;

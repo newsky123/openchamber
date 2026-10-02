@@ -1,3 +1,4 @@
+import { fetchOpenCode as fetch } from '../opencode/embedded-runtime.js';
 import { OpenCode } from '@opencode/client';
 
 // A removal should not hang on an unresponsive OpenCode server: disposal is

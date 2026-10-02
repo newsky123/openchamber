@@ -1,3 +1,4 @@
+import { fetchOpenCode as fetch } from '../opencode/embedded-runtime.js';
 // Session goal: a persisted, self-continuing objective attached to a session
 // (metadata.openchamber.goal). While the goal is active, the server keeps the
 // session working toward it: after each busy→idle transition it accounts token

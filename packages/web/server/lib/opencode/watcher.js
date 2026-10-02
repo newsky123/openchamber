@@ -1,3 +1,4 @@
+import { fetchOpenCode as fetch } from './embedded-runtime.js';
 import { createUpstreamSseReader } from '../event-stream/upstream-reader.js';
 import { translateWireEvent } from '../event-stream/translate-v2.js';
 

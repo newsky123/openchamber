@@ -27,12 +27,16 @@
     "@clack/prompts": "^1.1.0",
     "@octokit/rest": "^22.0.1",
     "@openchamber/sdk": "workspace:*",
+    "@opencode-ai/pty": "0.1.13",
     "@opencode/client": "2.0.21",
+    "@opencode/core": "2.0.21",
     "@opencode/schema": "2.0.21",
+    "@opencode/server": "2.0.21",
     "@simplewebauthn/server": "13.3.3",
     "bun-pty": "^0.4.5",
     "compression": "^1.8.1",
     "cron-parser": "^5.10.1",
+    "effect": "4.0.0-rc.112",
     "express": "^5.1.0",
     "http-proxy-middleware": "^3.0.5",
     "jose": "^6.1.3",
@@ -110,5 +114,8 @@
     "public",
     "package.json",
     "README.md"
-  ]
+  ],
+  "engines": {
+    "node": ">=24.0.0"
+  }
 }

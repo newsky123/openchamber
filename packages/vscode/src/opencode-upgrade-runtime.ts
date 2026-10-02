@@ -1,7 +1,8 @@
+import { fetchOpenCode as fetch, EMBEDDED_OPENCODE_ORIGIN } from '../../web/server/lib/opencode/embedded-runtime.js';
 type UpgradeCapability = {
   supported: boolean;
   manager: 'opencode' | 'external' | 'openchamber' | null;
-  reason: 'external' | 'unavailable' | null;
+  reason: 'external' | 'unavailable' | 'bundled' | null;
 };
 
 export type OpenCodeUpgradeManager = {
@@ -41,6 +42,7 @@ const compareVersions = (left: unknown, right: unknown): number => {
 
 const getCapability = (manager?: OpenCodeUpgradeManager): UpgradeCapability => {
   if (!manager) return { supported: false, manager: null, reason: 'unavailable' };
+  if (manager.getApiUrl() === EMBEDDED_OPENCODE_ORIGIN) return { supported: false, manager: 'openchamber', reason: 'bundled' };
   if (manager.getDebugInfo().mode !== 'managed') return { supported: false, manager: 'external', reason: 'external' };
   if (!manager.getApiUrl() || !manager.getDebugInfo().cliPath) return { supported: false, manager: null, reason: 'unavailable' };
   return { supported: true, manager: 'opencode', reason: null };

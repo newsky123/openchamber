@@ -1,3 +1,4 @@
+import { fetchOpenCode as fetch } from './embedded-runtime.js';
 import { readOpenCodeInfo, isSupportedOpenCodeVersion } from './compatibility.js';
 export const createOpenCodeNetworkRuntime = (deps) => {
   const {
@@ -83,7 +84,7 @@ export const createOpenCodeNetworkRuntime = (deps) => {
   };
 
   const buildOpenCodeUrl = (path, prefixOverride) => {
-    if (!state.openCodePort) {
+    if (!state.openCodePort && !state.openCodeBaseUrl) {
       throw new Error('OpenCode port is not available');
     }
     const normalizedPath = path.startsWith('/') ? path : `/${path}`;

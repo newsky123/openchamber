@@ -1,3 +1,4 @@
+import { fetchOpenCode as fetch } from './embedded-runtime.js';
 import { readOpenCodeInfo, readExternalOpenCodeVersion, isSupportedOpenCodeVersion, requireOpenCodeV2, UnsupportedOpenCodeVersionError } from './compatibility.js';
 import { spawn, spawnSync } from 'node:child_process';
 import net from 'node:net';
@@ -144,6 +145,7 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
     now = Date.now,
     topUpV1SessionMigration = topUpV1Migration,
     checkOpenCodeBinary = requireOpenCodeV2,
+    startEmbeddedOpenCode = null,
   } = deps;
 
   let managedPreflight = null;
@@ -597,7 +599,7 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
   };
 
   const probeOpenCodeHealthDetailed = async () => {
-    if (!state.openCodeProcess || !state.openCodePort) {
+    if (!state.openCodeProcess || (!state.openCodePort && !state.openCodeBaseUrl)) {
       return {
         healthy: false,
         failure: {
@@ -693,15 +695,15 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
   };
 
   const waitForOpenCodePort = async (timeoutMs = 15000) => {
-    if (state.openCodePort !== null) {
-      return state.openCodePort;
+    if (state.openCodePort !== null || state.openCodeBaseUrl) {
+      return state.openCodeBaseUrl || state.openCodePort;
     }
 
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 50));
-      if (state.openCodePort !== null) {
-        return state.openCodePort;
+      if (state.openCodePort !== null || state.openCodeBaseUrl) {
+        return state.openCodeBaseUrl || state.openCodePort;
       }
     }
 
@@ -716,6 +718,33 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
     const attemptStartedAt = performance.now();
     let phaseStartedAt = attemptStartedAt;
     recordStartupPerformance('opencode.attempt.start', { attempt });
+    if (startEmbeddedOpenCode) {
+      managedPreflight = Promise.resolve(true);
+      const shellEnv = getManagedOpenCodeShellEnvSnapshot?.() || {};
+      const managedEnv = await getManagedOpenCodeEnv();
+      if (state.isShuttingDown) throw new Error('OpenCode startup cancelled during shutdown');
+      try { topUpV1SessionMigration(); }
+      catch (error) { console.warn('[OpenCode] V1 session migration top-up failed:', error instanceof Error ? error.message : error); }
+      managedProcessEnv = stripAppImageLauncherEnv(stripAppImageArgv0Leak(applyProviderEnvAliases({
+        ...shellEnv, ...process.env, ...managedEnv,
+        PATH: buildManagedOpenCodePath?.() || process.env.PATH,
+      })));
+      const host = await startEmbeddedOpenCode({ env: managedProcessEnv, directory: state.openCodeWorkingDirectory });
+      if (state.isShuttingDown) {
+        await host.close();
+        throw new Error('OpenCode startup cancelled during shutdown');
+      }
+      state.openCodeProcess = host;
+      state.openCodePort = null;
+      state.openCodeBaseUrl = host.url;
+      state.isExternalOpenCode = false;
+      setDetectedOpenCodeApiPrefix();
+      state.isOpenCodeReady = true;
+      state.lastOpenCodeError = null;
+      state.openCodeNotReadySince = 0;
+      syncToHmrState();
+      return host;
+    }
     const desiredPort = env.ENV_CONFIGURED_OPENCODE_PORT ?? 0;
     const spawnPort = await resolveManagedOpenCodePort(desiredPort, env.ENV_CONFIGURED_OPENCODE_HOSTNAME);
     console.log(
@@ -986,7 +1015,7 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
   };
 
   const waitForOpenCodeReady = async (timeoutMs = 20000, intervalMs = 400) => {
-    if (!state.openCodePort) {
+    if ((!state.openCodePort && !state.openCodeBaseUrl)) {
       throw new Error('OpenCode port is not available');
     }
 
@@ -1040,7 +1069,7 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
   };
 
   const waitForAgentPresence = async (agentName, timeoutMs = 15000, intervalMs = 300) => {
-    if (!state.openCodePort) {
+    if ((!state.openCodePort && !state.openCodeBaseUrl)) {
       throw new Error('OpenCode port is not available');
     }
 
@@ -1073,8 +1102,10 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
     const { agentName } = options;
 
     console.log(`Refreshing OpenCode after ${reason}`);
-    clearResolvedOpenCodeBinary();
-    await applyOpencodeBinaryFromSettings();
+    if (!startEmbeddedOpenCode || state.isExternalOpenCode) {
+      clearResolvedOpenCodeBinary();
+      await applyOpencodeBinaryFromSettings();
+    }
 
     await restartOpenCode(reason || 'config-change');
 

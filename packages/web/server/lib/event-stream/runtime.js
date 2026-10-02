@@ -1,3 +1,4 @@
+import { fetchOpenCode as fetch } from '../opencode/embedded-runtime.js';
 import { WebSocketServer } from 'ws';
 
 import { parseRequestPathname } from '../terminal/terminal-ws-protocol.js';

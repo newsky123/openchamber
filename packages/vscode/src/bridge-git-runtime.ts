@@ -1,3 +1,4 @@
+import { fetchOpenCode as fetch } from '../../web/server/lib/opencode/embedded-runtime.js';
 import { OpenCode } from '@opencode/client';
 import * as gitService from './gitService';
 import type { BridgeContext, BridgeResponse } from './bridge';

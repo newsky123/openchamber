@@ -1,3 +1,4 @@
+import { fetchOpenCode as fetch } from '../opencode/embedded-runtime.js';
 import path from 'node:path';
 import fsPromises from 'node:fs/promises';
 import { OpenCode } from '@opencode/client';
@@ -59,7 +60,7 @@ export const createMessageSearchRuntime = ({
     const headers = { ...getOpenCodeAuthHeaders() };
     // v2 scopes by header and rejects non-ASCII header values.
     if (directory) headers['x-opencode-directory'] = encodeURIComponent(directory);
-    return OpenCode.make({ baseUrl: buildOpenCodeUrl('/', '').replace(/\/$/, ''), headers });
+    return OpenCode.make({ fetch, baseUrl: buildOpenCodeUrl('/', '').replace(/\/$/, ''), headers });
   };
 
   // Brings the file in line with the reasoning switch. True when reasoning has

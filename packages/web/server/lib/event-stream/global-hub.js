@@ -1,3 +1,4 @@
+import { fetchOpenCode as fetch } from '../opencode/embedded-runtime.js';
 import { randomUUID } from 'node:crypto';
 
 import { createUpstreamSseReader } from './upstream-reader.js';

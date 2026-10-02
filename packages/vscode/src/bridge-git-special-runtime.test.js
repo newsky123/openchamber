@@ -75,6 +75,7 @@ describe('bridge git special runtime', () => {
     });
     expect(rawFetch).not.toHaveBeenCalled();
     expect(make).toHaveBeenCalledWith({
+      fetch: expect.any(Function),
       baseUrl: 'http://opencode.test',
       headers: { Authorization: 'Bearer test' },
     });

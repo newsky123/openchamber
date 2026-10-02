@@ -27,7 +27,7 @@ afterEach(() => {
   process.env.PATH = originalPath;
 });
 
-const createRuntime = (loginShellPath, processLike = { platform: 'linux', env: process.env }) => createServerUtilsRuntime({
+const createRuntime = (loginShellPath, processLike = { platform: 'linux', env: process.env }, getOpenCodeBaseUrl = () => null) => createServerUtilsRuntime({
   fs,
   os,
   path,
@@ -40,6 +40,7 @@ const createRuntime = (loginShellPath, processLike = { platform: 'linux', env: p
   ensureOpenCodeApiPrefix: () => {},
   getUiNotificationClients: () => new Set(),
   getOpenCodePort: () => null,
+  getOpenCodeBaseUrl,
   setOpenCodePortState: () => {},
   syncToHmrState: () => {},
   markOpenCodeNotReady: () => {},
@@ -49,6 +50,11 @@ const createRuntime = (loginShellPath, processLike = { platform: 'linux', env: p
 });
 
 describe('server utils runtime', () => {
+  it('starts event consumers when the embedded engine has a transport identity and no port', async () => {
+    const runtime = createRuntime('', undefined, () => 'http://opencode.local');
+    await expect(runtime.waitForOpenCodePort(0)).resolves.toBe('http://opencode.local');
+    await expect(createRuntime('').waitForOpenCodePort(0)).rejects.toThrow('Timed out');
+  });
   it('prefers shell PATH for managed OpenCode before appending process-only entries', () => {
     const home = os.homedir();
     const currentPath = [

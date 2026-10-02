@@ -1,3 +1,4 @@
+import { fetchOpenCode as fetch } from './embedded-runtime.js';
 const DEFAULT_PWA_APP_NAME = 'OpenChamber';
 const mapPwaOrientationToManifest = (value) => {
   if (value === 'portrait') {
