@@ -8,6 +8,12 @@ This package owns the native shell: windows, menus, deep links, native notificat
 
 Desktop starts the OpenChamber web server in the same Electron main process. There is no separate sidecar subprocess for the OpenChamber server.
 
+Managed OpenCode authentication uses the web backend's private startup pipe.
+OpenCode generates a fresh password per launch. The backend keeps it in memory,
+and never adds it to Electron's environment, managed child arguments, or child
+environments. The renderer and remote clients do not receive it. See the
+[managed authentication boundary](../web/server/lib/opencode/DOCUMENTATION.md#public-exports-lifecyclejs).
+
 `main.mjs` imports `@openchamber/web/server/index.js` and calls `startWebUiServer()`. The Electron window then loads the UI from the local server in development, or from packaged `resources/web-dist` assets in packaged builds.
 
 Electron loads `entry.mjs`, not `main.mjs`. Electron holds `ready` until the

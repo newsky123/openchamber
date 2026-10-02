@@ -3,7 +3,7 @@ import type { ConnectionStatus, OpenCodeManager } from './opencode';
 const API_URL_WAIT_TIMEOUT_MS = 30000;
 
 export async function waitForApiUrl(
-  manager: OpenCodeManager | undefined,
+  manager: Pick<OpenCodeManager, 'getStatus' | 'getApiUrl' | 'onStatusChange'> | undefined,
   timeoutMs = API_URL_WAIT_TIMEOUT_MS,
 ): Promise<string | null> {
   if (!manager) {
@@ -11,12 +11,9 @@ export async function waitForApiUrl(
   }
 
   // Only hand out an API URL once OpenCode has actually passed its readiness
-  // check. getApiUrl() exposes `server.url` as soon as the process is spawned —
-  // BEFORE waitForReady confirms it can serve — so URL-presence alone would
-  // forward requests to a not-yet-ready OpenCode (and to a stale port during a
-  // workspace-switch restart). Gating on the connected status, which flips only
-  // after readiness and clears while restarting, mirrors the web proxy's
-  // isOpenCodeReady hold and closes that pre-ready forwarding window.
+  // check. Keep the bridge gate independent of URL presence so alternate
+  // manager implementations cannot expose an unready or stale endpoint.
+  // Timeout also preserves this gate rather than releasing a partial startup.
   const readyUrl = (): string | null => {
     if (manager.getStatus() !== 'connected') {
       return null;
@@ -77,9 +74,8 @@ export async function waitForApiUrl(
     }
 
     timeoutId = setTimeout(() => {
-      // Bounded fallback: hand back whatever URL exists (possibly null) so a
-      // genuinely-stuck startup surfaces as unavailable rather than hanging.
-      finish(manager.getApiUrl());
+      // An incomplete startup must never become an unauthenticated fallback.
+      finish(readyUrl());
     }, timeoutMs);
   });
 }

@@ -1,18 +1,29 @@
+import { stripOpenCodePasswordEnv, waitForManagedOpenCodeHandshake } from '../../web/server/lib/opencode/managed-auth.js';
 import { spawnOwnedProcess } from './owned-process';
 import { registerManagedProcess, unregisterManagedProcess } from './opencodeProcessRegistry';
 
 export function spawnManagedOpenCodeProcess(
   binary: string,
   args: string[],
-  options: { cwd: string; env: NodeJS.ProcessEnv; port: number; timeoutMs: number; signal: AbortSignal; sourceBinary: string; appBundleHint: string },
+  options: { cwd: string; env: NodeJS.ProcessEnv; port: number; timeoutMs: number; signal: AbortSignal; sourceBinary: string },
 ) {
   options.signal.throwIfAborted();
-  const owned = spawnOwnedProcess(binary, args, { cwd: options.cwd, env: options.env });
+  // Sanitize at the final spawn boundary, including callers with merged shell env.
+  const owned = spawnOwnedProcess(binary, args, { cwd: options.cwd, env: stripOpenCodePasswordEnv(options.env) });
   const registration = registerManagedProcess({
     pid: owned.child.pid, ownerPid: process.pid, port: options.port, binary: options.sourceBinary, runtime: 'vscode',
   });
+  const startup = new AbortController();
+  let url: string | null = null;
+  let password: string | null = null;
   let closing: Promise<void> | null = null;
+  const clearConnection = () => {
+    url = null;
+    password = null;
+  };
   const close = () => {
+    clearConnection();
+    startup.abort();
     if (!closing) closing = (async () => {
       await registration;
       await owned.terminate();
@@ -20,51 +31,38 @@ export function spawnManagedOpenCodeProcess(
     })();
     return closing;
   };
-  let url: string | null = null;
-  const ready = new Promise<void>((resolve, reject) => {
-    let stdout = '';
-    let output = '';
-    let settled = false;
-    const capture = (chunk: Buffer) => { output = (output + chunk.toString()).slice(-32 * 1024); };
-    const startupError = (message: string) => new Error(`${message} Binary used: ${options.sourceBinary}.${options.appBundleHint} Output: ${output.trim() || '(none)'}`);
-    const finish = (error?: Error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      options.signal.removeEventListener('abort', onAbort);
-      owned.child.stdout.off('data', onStdout);
-      owned.child.stderr.off('data', capture);
-      // Continue draining after readiness without retaining server output.
-      owned.child.stdout.resume();
-      owned.child.stderr.resume();
-      if (error) reject(error);
-      else resolve();
-    };
-    const onAbort = () => finish(new Error('OpenCode startup cancelled'));
-    const onStdout = (chunk: Buffer) => {
-      capture(chunk);
-      stdout += chunk.toString();
-      const lines = stdout.split('\n');
-      stdout = (lines.pop() ?? '').slice(-32 * 1024);
-      for (const line of lines) {
-        // OpenCode 2.x prints `server listening on http://host:port`; 1.x
-        // prefixed the same line with `opencode `. Anything else is noise.
-        const match = line.match(/(?:^|\s)server listening on\s+(https?:\/\/[^\s]+)/);
-        if (!match) continue;
-        url = match[1];
-        finish();
-        return;
-      }
-    };
-    const timer = setTimeout(() => finish(startupError(`Timeout waiting for server to start after ${options.timeoutMs}ms.`)), options.timeoutMs);
-    owned.child.stdout.on('data', onStdout);
-    owned.child.stderr.on('data', capture);
-    void owned.closed.then((exit) => finish(exit.error ?? startupError(`OpenCode process exited before serving with code ${exit.code}, signal ${exit.signal}.`)));
-    options.signal.addEventListener('abort', onAbort, { once: true });
-    if (options.signal.aborted) onAbort();
+  const onAbort = () => { void close().catch(() => {}); };
+  options.signal.addEventListener('abort', onAbort, { once: true });
+  const onExit = () => {
+    clearConnection();
+    // Let the handshake reader classify an early process failure before cleanup.
+    queueMicrotask(onAbort);
+  };
+  owned.child.once('exit', onExit);
+  owned.child.once('error', onExit);
+  const closed = owned.closed.then(async (exit) => {
+    clearConnection();
+    options.signal.removeEventListener('abort', onAbort);
+    await close();
+    return exit;
+  });
+  const ready = waitForManagedOpenCodeHandshake(owned.child, {
+    hostname: '127.0.0.1', port: options.port, timeoutMs: options.timeoutMs, signal: startup.signal,
+  }).then((connection) => {
+    startup.signal.throwIfAborted();
+    url = connection.url;
+    password = connection.password;
   }).catch(async (error) => {
     await close();
     throw error;
   });
-  return { get url() { return url; }, ready, close };
+  if (options.signal.aborted) onAbort();
+  return {
+    get url() { return url; },
+    getAuthHeaders() {
+      if (!password) throw new Error('Managed OpenCode authentication is not ready');
+      return { Authorization: `Basic ${Buffer.from(`opencode:${password}`, 'utf8').toString('base64')}` };
+    },
+    ready, closed, close,
+  };
 }

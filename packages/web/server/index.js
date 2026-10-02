@@ -646,8 +646,6 @@ hmrStateRuntime.ensureUserProvidedOpenCodePassword(hmrState);
 let healthCheckInterval = null;
 let server = null;
 let expressApp = null;
-let currentRestartPromise = null;
-let isRestartingOpenCode = false;
 let openCodeApiPrefix = '';
 let openCodeApiPrefixDetected = true;
 let openCodeApiDetectionTimer = null;
@@ -656,7 +654,6 @@ let lastOpenCodeLaunchDiagnostics = null;
 let lastOpenCodeHealthFailure = null;
 let lastManagedOpenCodeProcess = null;
 let lastOpenCodeRestartDiagnostics = null;
-let isOpenCodeReady = false;
 let openCodeNotReadySince = 0;
 let isExternalOpenCode = false;
 let exitOnShutdown = true;
@@ -688,20 +685,22 @@ const initialOpenCodeAuthState = hmrStateRuntime.resolveOpenCodeAuthFromState({
   hmrState,
   userProvidedOpenCodePassword,
 });
-let openCodeAuthPassword = initialOpenCodeAuthState.openCodeAuthPassword;
-let openCodeAuthSource = initialOpenCodeAuthState.openCodeAuthSource;
+// Auth is live shared state, not a module-local HMR snapshot. A retained child's
+// old exit callback must revoke credentials for newly loaded consumers too.
+hmrState.openCodeAuthPassword = initialOpenCodeAuthState.openCodeAuthPassword;
+hmrState.openCodeAuthSource = initialOpenCodeAuthState.openCodeAuthSource;
 
 // Sync helper - call after modifying any HMR state variable
 const syncToHmrState = () => {
   hmrStateRuntime.syncStateFromRuntime(hmrState, {
-    openCodeProcess,
-    openCodePort,
-    openCodeBaseUrl,
-    isShuttingDown,
+    openCodeProcess: hmrState.openCodeProcess,
+    openCodePort: hmrState.openCodePort,
+    openCodeBaseUrl: hmrState.openCodeBaseUrl,
+    isShuttingDown: hmrState.isShuttingDown,
     signalsAttached,
     openCodeWorkingDirectory,
-    openCodeAuthPassword,
-    openCodeAuthSource,
+    openCodeAuthPassword: hmrState.openCodeAuthPassword,
+    openCodeAuthSource: hmrState.openCodeAuthSource,
   });
 };
 
@@ -711,22 +710,18 @@ const syncFromHmrState = () => {
     hmrState,
     userProvidedOpenCodePassword,
   });
-  openCodeProcess = restored.openCodeProcess;
-  openCodePort = restored.openCodePort;
-  openCodeBaseUrl = restored.openCodeBaseUrl;
-  isShuttingDown = restored.isShuttingDown;
+  hmrState.openCodeProcess = restored.openCodeProcess;
+  hmrState.openCodePort = restored.openCodePort;
+  hmrState.openCodeBaseUrl = restored.openCodeBaseUrl;
+  hmrState.isShuttingDown = restored.isShuttingDown;
   signalsAttached = restored.signalsAttached;
   openCodeWorkingDirectory = restored.openCodeWorkingDirectory;
-  openCodeAuthPassword = restored.openCodeAuthPassword;
-  openCodeAuthSource = restored.openCodeAuthSource;
+  hmrState.openCodeAuthPassword = restored.openCodeAuthPassword;
+  hmrState.openCodeAuthSource = restored.openCodeAuthSource;
 };
 
 // Module-level variables that shadow HMR state
 // These are synced to/from hmrState to survive HMR reloads
-let openCodeProcess = hmrState.openCodeProcess;
-let openCodePort = hmrState.openCodePort;
-let openCodeBaseUrl = hmrState.openCodeBaseUrl ?? null;
-let isShuttingDown = hmrState.isShuttingDown;
 let signalsAttached = hmrState.signalsAttached;
 let openCodeWorkingDirectory = hmrState.openCodeWorkingDirectory;
 
@@ -756,28 +751,18 @@ const ENV_DESKTOP_NOTIFY = (() => {
   return /openchamber-server/i.test(argv0) || /openchamber-server/i.test(argv1);
 })();
 const openCodeAuthStateRuntime = createOpenCodeAuthStateRuntime({
-  crypto,
-  process,
-  getAuthPassword: () => openCodeAuthPassword,
-  setAuthPassword: (value) => {
-    openCodeAuthPassword = value;
-  },
-  getAuthSource: () => openCodeAuthSource,
-  setAuthSource: (value) => {
-    openCodeAuthSource = value;
-  },
-  getUserProvidedPassword: () => userProvidedOpenCodePassword,
+  state: hmrState,
   syncToHmrState,
 });
 
 const getOpenCodeAuthHeaders = (...args) => openCodeAuthStateRuntime.getOpenCodeAuthHeaders(...args);
 const isOpenCodeConnectionSecure = (...args) => openCodeAuthStateRuntime.isOpenCodeConnectionSecure(...args);
-const ensureLocalOpenCodeServerPassword = (...args) => openCodeAuthStateRuntime.ensureLocalOpenCodeServerPassword(...args);
+const setManagedOpenCodePassword = (...args) => openCodeAuthStateRuntime.setManagedOpenCodePassword(...args);
 
 const openCodeNetworkState = {};
 Object.defineProperties(openCodeNetworkState, {
-  openCodePort: { get: () => openCodePort, set: (value) => { openCodePort = value; } },
-  openCodeBaseUrl: { get: () => openCodeBaseUrl, set: (value) => { openCodeBaseUrl = value; } },
+  openCodePort: { get: () => hmrState.openCodePort, set: (value) => { hmrState.openCodePort = value; } },
+  openCodeBaseUrl: { get: () => hmrState.openCodeBaseUrl, set: (value) => { hmrState.openCodeBaseUrl = value; } },
   openCodeApiPrefix: { get: () => openCodeApiPrefix, set: (value) => { openCodeApiPrefix = value; } },
   openCodeApiPrefixDetected: { get: () => openCodeApiPrefixDetected, set: (value) => { openCodeApiPrefixDetected = value; } },
   openCodeApiDetectionTimer: { get: () => openCodeApiDetectionTimer, set: (value) => { openCodeApiDetectionTimer = value; } },
@@ -1192,24 +1177,24 @@ const serverUtilsRuntime = createServerUtilsRuntime({
   openCodeReadyGraceMs: OPEN_CODE_READY_GRACE_MS,
   longRequestTimeoutMs: LONG_REQUEST_TIMEOUT_MS,
   getRuntime: () => ({
-    openCodePort,
-    openCodeBaseUrl,
+    openCodePort: hmrState.openCodePort,
+    openCodeBaseUrl: hmrState.openCodeBaseUrl,
     openCodeNotReadySince,
-    isOpenCodeReady,
-    isRestartingOpenCode,
+    isOpenCodeReady: hmrState.isOpenCodeReady,
+    isRestartingOpenCode: hmrState.isRestartingOpenCode,
   }),
   getOpenCodeAuthHeaders,
   buildOpenCodeUrl,
   ensureOpenCodeApiPrefix,
   getUpstreamStallTimeoutMs,
   getUiNotificationClients: () => uiNotificationClients,
-  getOpenCodePort: () => openCodePort,
+  getOpenCodePort: () => hmrState.openCodePort,
   setOpenCodePortState: (value) => {
-    openCodePort = value;
+    hmrState.openCodePort = value;
   },
   syncToHmrState,
   markOpenCodeNotReady: () => {
-    isOpenCodeReady = false;
+    hmrState.isOpenCodeReady = false;
   },
   setOpenCodeNotReadySince: (value) => {
     openCodeNotReadySince = value;
@@ -1314,12 +1299,13 @@ const startupPipelineRuntime = createStartupPipelineRuntime({
 
 const openCodeLifecycleState = {};
 Object.defineProperties(openCodeLifecycleState, {
-  openCodeProcess: { get: () => openCodeProcess, set: (value) => { openCodeProcess = value; } },
-  openCodePort: { get: () => openCodePort, set: (value) => { openCodePort = value; } },
-  openCodeBaseUrl: { get: () => openCodeBaseUrl, set: (value) => { openCodeBaseUrl = value; } },
+  openCodeProcess: { get: () => hmrState.openCodeProcess, set: (value) => { hmrState.openCodeProcess = value; } },
+  openCodePort: { get: () => hmrState.openCodePort, set: (value) => { hmrState.openCodePort = value; } },
+  openCodeBaseUrl: { get: () => hmrState.openCodeBaseUrl, set: (value) => { hmrState.openCodeBaseUrl = value; } },
   openCodeWorkingDirectory: { get: () => openCodeWorkingDirectory, set: (value) => { openCodeWorkingDirectory = value; } },
-  currentRestartPromise: { get: () => currentRestartPromise, set: (value) => { currentRestartPromise = value; } },
-  isRestartingOpenCode: { get: () => isRestartingOpenCode, set: (value) => { isRestartingOpenCode = value; } },
+  currentStartPromise: { get: () => hmrState.currentStartPromise, set: (value) => { hmrState.currentStartPromise = value; } },
+  currentRestartPromise: { get: () => hmrState.currentRestartPromise, set: (value) => { hmrState.currentRestartPromise = value; } },
+  isRestartingOpenCode: { get: () => hmrState.isRestartingOpenCode, set: (value) => { hmrState.isRestartingOpenCode = value; } },
   openCodeApiPrefix: { get: () => openCodeApiPrefix, set: (value) => { openCodeApiPrefix = value; } },
   openCodeApiPrefixDetected: { get: () => openCodeApiPrefixDetected, set: (value) => { openCodeApiPrefixDetected = value; } },
   openCodeApiDetectionTimer: { get: () => openCodeApiDetectionTimer, set: (value) => { openCodeApiDetectionTimer = value; } },
@@ -1328,10 +1314,10 @@ Object.defineProperties(openCodeLifecycleState, {
   lastOpenCodeHealthFailure: { get: () => lastOpenCodeHealthFailure, set: (value) => { lastOpenCodeHealthFailure = value; } },
   lastManagedOpenCodeProcess: { get: () => lastManagedOpenCodeProcess, set: (value) => { lastManagedOpenCodeProcess = value; } },
   lastOpenCodeRestartDiagnostics: { get: () => lastOpenCodeRestartDiagnostics, set: (value) => { lastOpenCodeRestartDiagnostics = value; } },
-  isOpenCodeReady: { get: () => isOpenCodeReady, set: (value) => { isOpenCodeReady = value; } },
+  isOpenCodeReady: { get: () => hmrState.isOpenCodeReady, set: (value) => { hmrState.isOpenCodeReady = value; } },
   openCodeNotReadySince: { get: () => openCodeNotReadySince, set: (value) => { openCodeNotReadySince = value; } },
   isExternalOpenCode: { get: () => isExternalOpenCode, set: (value) => { isExternalOpenCode = value; } },
-  isShuttingDown: { get: () => isShuttingDown, set: (value) => { isShuttingDown = value; } },
+  isShuttingDown: { get: () => hmrState.isShuttingDown, set: (value) => { hmrState.isShuttingDown = value; } },
   healthCheckInterval: { get: () => healthCheckInterval, set: (value) => { healthCheckInterval = value; } },
   expressApp: { get: () => expressApp, set: (value) => { expressApp = value; } },
   useWslForOpencode: { get: () => useWslForOpencode, set: (value) => { useWslForOpencode = value; } },
@@ -1357,7 +1343,7 @@ const openCodeLifecycleRuntime = createOpenCodeLifecycleRuntime({
   normalizeApiPrefix,
   applyOpencodeBinaryFromSettings,
   ensureOpencodeCliEnv,
-  ensureLocalOpenCodeServerPassword,
+  setManagedOpenCodePassword,
   resolveManagedOpenCodeLaunchSpec,
   setOpenCodePort,
   setDetectedOpenCodeApiPrefix,
@@ -1435,7 +1421,7 @@ configureOpenCodeCredentials(openCodeCredentialSource({
 
 const getOpenCodeCompatibility = async () => {
   if (isExternalOpenCode || ENV_SKIP_OPENCODE_START) {
-    const base = ENV_CONFIGURED_OPENCODE_HOST?.origin || openCodeBaseUrl || `http://127.0.0.1:${openCodePort || ENV_EFFECTIVE_PORT}`;
+    const base = ENV_CONFIGURED_OPENCODE_HOST?.origin || hmrState.openCodeBaseUrl || `http://127.0.0.1:${hmrState.openCodePort || ENV_EFFECTIVE_PORT}`;
     const version = await readExternalOpenCodeVersion(base, getOpenCodeAuthHeaders()).catch(() => null);
     return describeOpenCodeCompatibility(version, 'external', false);
   }
@@ -1451,7 +1437,7 @@ const getOpenCodeUpgradeCapability = () => {
     || resolvedOpencodeBinary;
   return resolveOpenCodeUpgradeCapability({
     isExternal: isExternalOpenCode,
-    hasManagedProcess: Boolean(openCodeProcess),
+    hasManagedProcess: Boolean(hmrState.openCodeProcess),
     activeBinary,
     isBundledBinary: isBundledOpenCodeCliPath,
   });
@@ -1730,9 +1716,9 @@ const gracefulShutdownRuntime = createGracefulShutdownRuntime({
   process,
   shutdownTimeoutMs: SHUTDOWN_TIMEOUT,
   getExitOnShutdown: () => exitOnShutdown,
-  getIsShuttingDown: () => isShuttingDown,
+  getIsShuttingDown: () => hmrState.isShuttingDown,
   setIsShuttingDown: (value) => {
-    isShuttingDown = value;
+    hmrState.isShuttingDown = value;
   },
   syncToHmrState,
   openCodeWatcherRuntime,
@@ -1754,10 +1740,10 @@ const gracefulShutdownRuntime = createGracefulShutdownRuntime({
     messageStreamRuntime = value;
   },
   shouldSkipOpenCodeStop: () => ENV_SKIP_OPENCODE_START || isExternalOpenCode,
-  getOpenCodePort: () => openCodePort,
-  getOpenCodeProcess: () => openCodeProcess,
+  getOpenCodePort: () => hmrState.openCodePort,
+  getOpenCodeProcess: () => hmrState.openCodeProcess,
   setOpenCodeProcess: (value) => {
-    openCodeProcess = value;
+    hmrState.openCodeProcess = value;
   },
   killProcessOnPort,
   waitForPortRelease,
@@ -2079,13 +2065,13 @@ async function main(options = {}) {
         ? resolveManagedOpenCodeLaunchSpec(resolvedOpencodeBinary)
         : null;
       return {
-        openCodePort,
-        openCodeRunning: Boolean(openCodePort && isOpenCodeReady && !isRestartingOpenCode),
+        openCodePort: hmrState.openCodePort,
+        openCodeRunning: Boolean(hmrState.openCodePort && hmrState.isOpenCodeReady && !hmrState.isRestartingOpenCode),
         openCodeSecureConnection: isOpenCodeConnectionSecure(),
-        openCodeAuthSource: openCodeAuthSource || null,
+        openCodeAuthSource: hmrState.openCodeAuthSource || null,
         openCodeApiPrefix: '',
         openCodeApiPrefixDetected: true,
-        isOpenCodeReady,
+        isOpenCodeReady: hmrState.isOpenCodeReady,
         lastOpenCodeError,
         lastOpenCodeLaunchDiagnostics,
         lastOpenCodeHealthFailure,
@@ -2279,7 +2265,7 @@ async function main(options = {}) {
   // user can see is exactly a port the tunnel will dial.
   const devServerScanner = createDevServerScanner({ spawn, platform: process.platform });
   const listDevServers = () => devServerScanner.discover({
-    ownPorts: [port, openCodePort].filter((value) => Number.isInteger(value) && value > 0),
+    ownPorts: [port, hmrState.openCodePort].filter((value) => Number.isInteger(value) && value > 0),
   });
 
   createDevTunnelRuntime({
@@ -2343,10 +2329,10 @@ async function main(options = {}) {
     isUnsafeSkillRelativePath,
     buildOpenCodeUrl,
     getOpenCodeAuthHeaders,
-    getOpenCodePort: () => openCodePort,
+    getOpenCodePort: () => hmrState.openCodePort,
     // Dev-server discovery must not offer OpenChamber's own listeners back to
     // the user as something to preview.
-    getOwnPorts: () => [port, openCodePort].filter((value) => Number.isInteger(value) && value > 0),
+    getOwnPorts: () => [port, hmrState.openCodePort].filter((value) => Number.isInteger(value) && value > 0),
     devServerScanner,
     buildAugmentedPath,
     projectConfigRuntime,
@@ -2472,7 +2458,7 @@ async function main(options = {}) {
     expressApp: app,
     httpServer: server,
     getPort: () => tunnelRuntimeContext.getActivePort(),
-    getOpenCodePort: () => openCodePort,
+    getOpenCodePort: () => hmrState.openCodePort,
     getTunnelUrl: () => tunnelService.getPublicUrl(),
     getQuitRiskStatus: () => ({
       tunnel: {
@@ -2480,11 +2466,11 @@ async function main(options = {}) {
       },
       scheduledTasks: scheduledTasksRuntime.getStatus(),
     }),
-    isReady: () => isOpenCodeReady,
+    isReady: () => hmrState.isOpenCodeReady,
     getManagedOpenCodePreflight: () => openCodeLifecycleRuntime.getManagedOpenCodePreflight(),
     restartOpenCode: () => restartOpenCode(),
     getOpenCodeProcessInfo: () => {
-      const managed = Boolean((openCodeProcess || openCodePort) && !ENV_SKIP_OPENCODE_START && !isExternalOpenCode);
+      const managed = Boolean((hmrState.openCodeProcess || hmrState.openCodePort) && !ENV_SKIP_OPENCODE_START && !isExternalOpenCode);
       // Only ever expose pid/port for a server WE manage. The Electron-side
       // killer kills by port (lsof + kill -KILL), so returning a port we don't
       // own — e.g. an external/desktop OpenCode on 4096 we attached to — would
@@ -2493,8 +2479,8 @@ async function main(options = {}) {
       // target, instead of relying on the flag check alone.
       return {
         managed,
-        pid: managed && typeof openCodeProcess?.pid === 'number' ? openCodeProcess.pid : null,
-        port: managed ? openCodePort : null,
+        pid: managed && Number.isInteger(hmrState.openCodeProcess?.pid) ? hmrState.openCodeProcess.pid : null,
+        port: managed ? hmrState.openCodePort : null,
       };
     },
     stop: (shutdownOptions = {}) => gracefulShutdown({ exitProcess: shutdownOptions.exitProcess ?? false }),

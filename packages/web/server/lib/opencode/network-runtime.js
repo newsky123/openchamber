@@ -51,6 +51,7 @@ export const createOpenCodeNetworkRuntime = (deps) => {
         // readiness signal, the payload carries no `healthy` field.
         const response = await fetch(`${url.replace(/\/+$/, '')}/api/info`, {
           method: 'GET',
+          redirect: 'error',
           headers: {
             Accept: 'application/json',
             ...getOpenCodeAuthHeaders(),
