@@ -29,8 +29,7 @@ Keep `bridge.ts` as a thin orchestration layer that delegates message handling t
   - Owns background child termination shared by Git and managed OpenCode. POSIX children have a separate process group, which receives SIGKILL after the grace period or root exit so a SIGTERM-resistant descendant cannot survive. Windows enumerates and terminates the tree before losing its root, using an asynchronous hidden `taskkill` invocation. Completion waits for stdio closure; failed termination remains an error.
 
 - `managed-opencode-process.ts` and `opencode.ts`
-  - The process handle and shared registry entry exist from spawn, before readiness. Startup timeout, malformed output, and cancellation terminate the child before the attempt settles. Registry removal follows confirmed termination. Both child streams are private and drained for the full process lifetime. Startup errors contain fixed diagnostics, never raw child output.
-  - Managed launches strip both OpenCode password env variables and use the shared `packages/web/server/lib/opencode/managed-auth.js` private handshake. Credentials stay in the process handle and clear on close, failure, abort or exit. External URLs keep their configured authentication. See the [managed auth boundary](../../web/server/lib/opencode/DOCUMENTATION.md#public-exports-lifecyclejs).
+  - The process handle and shared registry entry exist from spawn, before readiness. Startup timeout, malformed output, and cancellation terminate the child before the attempt settles. Registry removal follows confirmed termination. Startup diagnostics retain a bounded output tail; ready processes keep draining both streams.
   - Manager operations run in order. Stop cancels in-flight readiness/health probes and invalidates older queued starts/restarts. A later explicit start can run after stop. Startup passes an explicit cwd to the child without changing the extension host's cwd.
   - Shutdown targets owned processes rather than whichever process happens to listen on a remembered port. External OpenCode receives no spawn or termination request.
   - `bridge-git-process-runtime.test.ts` and `managed-opencode-process.test.ts` use real subprocesses for repeated deadlines, signal exits, stdin EOF, large stderr, deactivation, startup failure, and resistant descendants. The manager was also exercised in an isolated macOS VS Code 1.137.0 extension host with a controlled server fixture. Before the fix, two restarts left two orphaned tool processes beside the active server and its tool. After the fix, only the active pair remained, and stop removed it. The complete fixed scenario created eight processes across startup, restarts, and cancellation, with none surviving. Native Windows process-tree behavior remains unverified on the macOS test host.
@@ -251,12 +250,10 @@ spawning a managed server and refuses to start on anything else
 start and serve a different API, leaving the user with a webview that loads and
 then fails every request, so the failure is reported up front instead.
 
-Managed readiness requires both `server listening on <url>` and the generated
-`server password <secret>` on the private stdout pipe, followed by an authenticated
-`GET /api/info` with a supported version. The initial readiness probe rejects redirects. An
-incomplete handshake fails closed, terminates its owned process tree, and never
-falls back to environment credentials or an unauthenticated URL. The bridge
-releases the managed URL only after health passes, including on wait timeouts.
+Readiness comes from the `server listening on <url>` line on stdout, confirmed
+by `GET /api/info` (OpenCode 2.0.8 removed `/api/health`). A 200 is the whole
+readiness answer; the payload carries `{ version, pid, urls, paths }` and no
+`healthy` field.
 
 ## Global OpenCode paths
 

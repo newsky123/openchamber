@@ -335,7 +335,7 @@ clear on close, exit or startup failure. Starts/restarts are serialized and
 requests fail closed without managed auth. Initial authenticated readiness
 rejects redirects. Each new process supplies a fresh password.
 
-Web and Electron share this lifecycle; VS Code uses the same handshake parser.
+Web and Electron share this lifecycle. VS Code keeps its existing authentication.
 Mobile clients receive no OpenCode password. External connections keep their
 configured credentials and the `opencode` Basic auth username. This boundary
 covers env, argv and output exposure, not root/debuggers, same-user memory/pipe

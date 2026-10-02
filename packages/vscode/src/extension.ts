@@ -658,8 +658,8 @@ export async function activate(context: vscode.ExtensionContext) {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), timeoutMs);
         const startedAt = Date.now();
+        const openCodeAuthHeaders = openCodeManager?.getOpenCodeAuthHeaders() || {};
         try {
-          const openCodeAuthHeaders = openCodeManager?.getOpenCodeAuthHeaders() || {};
           const resp = await fetch(input, {
             method: 'GET',
             headers: { Accept: 'application/json', ...openCodeAuthHeaders },
