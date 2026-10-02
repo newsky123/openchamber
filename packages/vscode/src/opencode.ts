@@ -6,7 +6,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as net from 'net';
 import { spawnSync } from 'child_process';
-import { stripOpenCodePasswordEnv } from '../../web/server/lib/opencode/managed-auth.js';
+import { stripOpenCodePasswordEnv, sanitizeManagedOpenCodeEnv } from '../../web/server/lib/opencode/managed-auth.js';
 import { normalizeWindowsDriveLetter } from './pathUtils';
 import { resolveWorkingDirectoryChange } from './workingDirectoryChange';
 import { reapOrphanedProcesses } from './opencodeProcessRegistry';
@@ -688,7 +688,7 @@ async function waitForReady(
 function assertSupportedOpenCodeBinary(binary: string, env: NodeJS.ProcessEnv): void {
   const launch = resolveWindowsLaunchSpec(binary, ['--version']);
   const result = spawnSync(launch.binary, launch.args, {
-    env: stripOpenCodePasswordEnv(env),
+    env: sanitizeManagedOpenCodeEnv(env),
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
     timeout: 15000,
@@ -741,7 +741,7 @@ function spawnManagedOpenCodeServer(
 ) {
   const binary = stripWrappingQuotes(process.env.OPENCODE_BINARY || 'opencode') || 'opencode';
   assertSupportedOpenCodeBinary(binary, env);
-  const launch = resolveWindowsLaunchSpec(binary, ['serve', '--hostname', '127.0.0.1', '--port', String(port)]);
+  const launch = resolveWindowsLaunchSpec(binary, ['serve', '--compiled-plugins-only', '--hostname', '127.0.0.1', '--port', String(port)]);
   return spawnManagedOpenCodeProcess(launch.binary, launch.args, {
     cwd: workingDirectory,
     env,
@@ -933,7 +933,7 @@ export function createOpenCodeManager(context: vscode.ExtensionContext): OpenCod
       fs.mkdirSync(serverCwd, { recursive: true });
       const port = await allocateManagedOpenCodePort();
       startup.signal.throwIfAborted();
-      serverEnv = stripOpenCodePasswordEnv(applyProviderEnvAliases({ ...process.env }));
+      serverEnv = sanitizeManagedOpenCodeEnv(applyProviderEnvAliases({ ...process.env }));
       const startedServer = spawnManagedOpenCodeServer(serverCwd, port, READY_CHECK_TIMEOUT_MS, startup.signal, serverEnv);
       server = startedServer;
       void startedServer.closed.then((exit) => {

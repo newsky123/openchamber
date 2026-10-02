@@ -1,4 +1,4 @@
-import { stripOpenCodePasswordEnv, waitForManagedOpenCodeHandshake } from '../../web/server/lib/opencode/managed-auth.js';
+import { sanitizeManagedOpenCodeEnv, waitForManagedOpenCodeHandshake } from '../../web/server/lib/opencode/managed-auth.js';
 import { spawnOwnedProcess } from './owned-process';
 import { registerManagedProcess, unregisterManagedProcess } from './opencodeProcessRegistry';
 
@@ -9,7 +9,7 @@ export function spawnManagedOpenCodeProcess(
 ) {
   options.signal.throwIfAborted();
   // Sanitize at the final spawn boundary, including callers with merged shell env.
-  const owned = spawnOwnedProcess(binary, args, { cwd: options.cwd, env: stripOpenCodePasswordEnv(options.env) });
+  const owned = spawnOwnedProcess(binary, args, { cwd: options.cwd, env: sanitizeManagedOpenCodeEnv(options.env) });
   const registration = registerManagedProcess({
     pid: owned.child.pid, ownerPid: process.pid, port: options.port, binary: options.sourceBinary, runtime: 'vscode',
   });
@@ -48,6 +48,7 @@ export function spawnManagedOpenCodeProcess(
   });
   const ready = waitForManagedOpenCodeHandshake(owned.child, {
     hostname: '127.0.0.1', port: options.port, timeoutMs: options.timeoutMs, signal: startup.signal,
+    requireCompiledPluginsOnly: true, agentToolsBootstrap: 0,
   }).then((connection) => {
     startup.signal.throwIfAborted();
     url = connection.url;

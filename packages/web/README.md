@@ -49,9 +49,12 @@ openchamber update                   # Update to latest version
 
 `startup enable` snapshots your current environment into the native service so startup behaves like you launched `openchamber` from the same shell. This preserves provider tokens, PATH, SSH agent settings, and other CLI auth/config env vars. Use `--no-env-snapshot` for a minimal service env.
 
-When OpenChamber launches the local OpenCode server, it also registers a native
-`openchamber` agent tool for project, session, and scheduled-task orchestration.
-The tool is not injected when connecting to an external OpenCode server.
+Managed OpenCode requires the matching compiled-only OpenCode build. OpenChamber
+passes `--compiled-plugins-only` and verifies its startup acknowledgement; a stock
+CLI without this feature fails closed. The four OpenChamber agent tools are
+statically compiled into that build. Their schemas and private callback
+capability arrive through a one-shot private stdin pipe. External OpenCode gets
+no tool bootstrap and remains outside this managed code-loading policy.
 
 Managed local OpenCode servers generate their own temporary password. OpenChamber
 receives it through a private startup pipe and keeps it in backend memory. It is
@@ -60,9 +63,9 @@ server or its shell/MCP children. External-server credentials keep their existin
 configuration. See [managed OpenCode authentication](server/lib/opencode/DOCUMENTATION.md#public-exports-lifecyclejs)
 for the process and threat boundaries.
 
-Behavior settings can optionally inject a managed system-prompt optimizer on
-the next OpenCode restart. It is disabled by default and is not available for
-external OpenCode servers.
+Dynamic OpenCode plugin configuration is no longer offered. Existing user and
+project plugin files are preserved. Managed engines do not load them, and
+provider/model driver packages must already be compiled into the engine.
 
 ### Tunnel behavior notes
 

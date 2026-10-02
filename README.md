@@ -7,6 +7,14 @@
 
 <a href="https://www.blacksmith.sh/"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/references/badges/blacksmith-dark.svg"><img src="docs/references/badges/blacksmith-light.svg" height="28" alt="CI powered by Blacksmith" /></picture></a>
 
+## Compiled-only engine branch
+
+This branch must be paired with the matching OpenCode build that supports
+`serve --compiled-plugins-only` and `--openchamber-bootstrap`. Stock managed
+CLIs are refused before plugin loading. Point `OPENCODE_BINARY` at the compiled
+binary for local development. Public release installation instructions below
+refer to the released app; they do not install this branch's paired engine.
+
 ## Run agent work. Keep control. Ship from anywhere.
 
 **OpenChamber is an open-source workspace for running and reviewing AI coding work on desktop, web, VS Code, and mobile.**

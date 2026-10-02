@@ -17,10 +17,8 @@ const createApp = ({ settings = { nativeNotificationsEnabled: true, notification
   });
   const routes = registerNotificationEmitRoutes(app, {
     express,
-    isAgentToolRequestAuthorized: (req) => req.headers.authorization === PLUGIN_TOKEN,
     emitter,
   });
-  routes.registerPluginRoute();
   // Stands in for the server's API auth gate between the two registrations.
   app.use('/api', (req, res, next) => (
     req.headers.authorization === UI_TOKEN ? next() : res.status(401).json({ error: 'UI session missing' })
@@ -30,11 +28,11 @@ const createApp = ({ settings = { nativeNotificationsEnabled: true, notification
 };
 
 describe('POST /api/notifications/emit', () => {
-  it('delivers a plugin notification without a UI session', async () => {
+  it('delivers an authenticated notification', async () => {
     const { app, delivered } = createApp();
     const response = await request(app)
       .post('/api/notifications/emit')
-      .set('Authorization', PLUGIN_TOKEN)
+      .set('Authorization', UI_TOKEN)
       .send({ title: ' Build done ', body: 'Ready', sessionId: 'ses_1' });
 
     expect(response.status).toBe(200);
@@ -58,6 +56,7 @@ describe('POST /api/notifications/emit', () => {
     await request(app).post('/api/notifications/emit').set('Authorization', UI_TOKEN).send({ body: 'Hi' }).expect(200);
     await request(app).post('/api/notifications/emit').send({ body: 'Hi' }).expect(401);
     await request(app).post('/api/notifications/emit').set('Authorization', 'Bearer wrong').send({ body: 'Hi' }).expect(401);
+    await request(app).post('/api/notifications/emit').set('Authorization', PLUGIN_TOKEN).send({ body: 'Hi' }).expect(401);
     expect(delivered.map(({ payload }) => payload.title)).toEqual(['OpenChamber']);
   });
 
@@ -65,7 +64,7 @@ describe('POST /api/notifications/emit', () => {
     const { app, delivered } = createApp();
     await request(app)
       .post('/api/notifications/emit')
-      .set('Authorization', PLUGIN_TOKEN)
+      .set('Authorization', UI_TOKEN)
       .send({ title: 'x', kind: 'opencode-restart-interrupted' })
       .expect(200);
     expect(delivered[0].payload.kind).toBe('plugin');
@@ -73,7 +72,7 @@ describe('POST /api/notifications/emit', () => {
 
   it('rejects empty and oversized payloads', async () => {
     const { app, delivered } = createApp();
-    const post = (body) => request(app).post('/api/notifications/emit').set('Authorization', PLUGIN_TOKEN).send(body);
+    const post = (body) => request(app).post('/api/notifications/emit').set('Authorization', UI_TOKEN).send(body);
     await post({}).expect(400);
     await post({ title: '   ' }).expect(400);
     await post({ title: 'x'.repeat(121) }).expect(400);
@@ -84,7 +83,7 @@ describe('POST /api/notifications/emit', () => {
   it('limits the rate and recovers after the window', async () => {
     let clock = 0;
     const { app, delivered } = createApp({ now: () => clock });
-    const post = () => request(app).post('/api/notifications/emit').set('Authorization', PLUGIN_TOKEN).send({ body: 'tick' });
+    const post = () => request(app).post('/api/notifications/emit').set('Authorization', UI_TOKEN).send({ body: 'tick' });
     for (let index = 0; index < 10; index += 1) await post().expect(200);
     const limited = await post();
     expect(limited.status).toBe(429);
@@ -96,17 +95,17 @@ describe('POST /api/notifications/emit', () => {
 
   it('follows the notifications setting and the always mode', async () => {
     const off = createApp({ settings: { nativeNotificationsEnabled: false } });
-    const skipped = await request(off.app).post('/api/notifications/emit').set('Authorization', PLUGIN_TOKEN).send({ body: 'x' });
+    const skipped = await request(off.app).post('/api/notifications/emit').set('Authorization', UI_TOKEN).send({ body: 'x' });
     expect(skipped.body).toEqual({ delivered: false, reason: 'notifications-disabled' });
     expect(off.delivered).toEqual([]);
 
     const always = createApp({ settings: { nativeNotificationsEnabled: true, notificationMode: 'always' } });
-    await request(always.app).post('/api/notifications/emit').set('Authorization', PLUGIN_TOKEN).send({ body: 'x' }).expect(200);
+    await request(always.app).post('/api/notifications/emit').set('Authorization', UI_TOKEN).send({ body: 'x' }).expect(200);
     expect(always.delivered[0].payload.requireHidden).toBe(false);
 
     const focused = createApp();
-    await request(focused.app).post('/api/notifications/emit').set('Authorization', PLUGIN_TOKEN).send({ body: 'x', showWhenFocused: true }).expect(200);
+    await request(focused.app).post('/api/notifications/emit').set('Authorization', UI_TOKEN).send({ body: 'x', showWhenFocused: true }).expect(200);
     expect(focused.delivered[0].payload.requireHidden).toBe(false);
-    await request(focused.app).post('/api/notifications/emit').set('Authorization', PLUGIN_TOKEN).send({ body: 'x', showWhenFocused: 'yes' }).expect(400);
+    await request(focused.app).post('/api/notifications/emit').set('Authorization', UI_TOKEN).send({ body: 'x', showWhenFocused: 'yes' }).expect(400);
   });
 });

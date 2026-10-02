@@ -4,7 +4,7 @@ import { useI18n } from '@/lib/i18n';
 
 /**
  * Autosave for the OpenCode configuration pages (agents, commands, skills,
- * MCP, plugins, behavior).
+ * MCP, behavior).
  *
  * OpenCode v2 watches its own config files and applies changes within a second
  * or two, so these pages have no Save or Apply button. Toggles, selects and

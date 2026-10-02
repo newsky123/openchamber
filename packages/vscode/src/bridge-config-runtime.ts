@@ -37,16 +37,6 @@ import {
   type DiscoveredSkill,
   SKILL_SCOPE,
   listMcpConfigs,
-  listPluginDirFiles,
-  listPluginEntries,
-  getPluginEntry,
-  createPluginEntry,
-  updatePluginEntry,
-  deletePluginEntry,
-  readPluginDirFile,
-  writePluginDirFile,
-  deletePluginDirFile,
-  queryPluginRegistry,
   listSnippets,
   getMcpConfig,
   createMcpConfig,
@@ -92,10 +82,6 @@ const resolveWorkingDirectory = (ctx: BridgeContext | undefined, directory?: str
   (typeof directory === 'string' && directory.trim())
     ? directory.trim()
     : (ctx?.manager?.getWorkingDirectory() || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath)
-);
-
-const pluginMutationPayload = (label: string) => buildAppliedResponse(
-  `${label}.`,
 );
 
 const parseSkillsCatalogSources = (settings: Record<string, unknown>): SkillsCatalogSourceConfig[] => {
@@ -488,95 +474,14 @@ export async function handleConfigBridgeMessage(
       return { id, type, success: false, error: `Unsupported method: ${normalizedMethod}` };
     }
 
-    case 'api:config/plugins': {
-      const { method, target, pluginId, body, directory, specs, refresh } = (payload || {}) as {
-        method?: string;
-        target?: 'list' | 'registry' | 'entry' | 'file';
-        pluginId?: string;
-        body?: Record<string, unknown>;
-        directory?: string;
-        specs?: string[];
-        refresh?: boolean;
+    case 'api:config/plugins':
+      return {
+        id,
+        type,
+        success: false,
+        error: 'Dynamic OpenCode plugin configuration is unavailable.',
+        data: { code: 'dynamic_plugins_unavailable' },
       };
-      const normalizedMethod = typeof method === 'string' && method.trim() ? method.trim().toUpperCase() : 'GET';
-      const workingDirectory = resolveWorkingDirectory(ctx, directory);
-
-      if ((target === 'list' || !target) && normalizedMethod === 'GET') {
-        return {
-          id,
-          type,
-          success: true,
-          data: {
-            entries: listPluginEntries(workingDirectory),
-            files: listPluginDirFiles(workingDirectory),
-          },
-        };
-      }
-
-      if (target === 'registry' && normalizedMethod === 'GET') {
-        const data = await queryPluginRegistry(Array.isArray(specs) ? specs : [], {
-          refresh: refresh === true,
-          workingDirectory,
-        });
-        return { id, type, success: true, data };
-      }
-
-      if (target === 'entry') {
-        if (normalizedMethod === 'GET') {
-          if (!pluginId) return { id, type, success: false, error: 'Plugin entry id is required' };
-          const entry = getPluginEntry(pluginId, workingDirectory);
-          if (!entry) return { id, type, success: false, error: 'Plugin entry not found' };
-          return { id, type, success: true, data: entry };
-        }
-        if (normalizedMethod === 'POST') {
-          createPluginEntry(body || {}, workingDirectory);
-        } else if (normalizedMethod === 'PATCH') {
-          if (!pluginId) return { id, type, success: false, error: 'Plugin entry id is required' };
-          updatePluginEntry(pluginId, body || {}, workingDirectory);
-        } else if (normalizedMethod === 'DELETE') {
-          if (!pluginId) return { id, type, success: false, error: 'Plugin entry id is required' };
-          deletePluginEntry(pluginId, workingDirectory);
-        } else {
-          return { id, type, success: false, error: `Unsupported method: ${normalizedMethod}` };
-        }
-        return {
-          id,
-          type,
-          success: true,
-          data: pluginMutationPayload('Plugin entry changed'),
-        };
-      }
-
-      if (target === 'file') {
-        if (normalizedMethod === 'GET') {
-          if (!pluginId) return { id, type, success: false, error: 'Plugin file id is required' };
-          const file = readPluginDirFile(pluginId, workingDirectory);
-          if (!file) return { id, type, success: false, error: 'Plugin file not found' };
-          return { id, type, success: true, data: file };
-        }
-        if (normalizedMethod === 'POST') {
-          writePluginDirFile(body || {}, workingDirectory);
-        } else if (normalizedMethod === 'PUT') {
-          if (!pluginId) return { id, type, success: false, error: 'Plugin file id is required' };
-          const existing = readPluginDirFile(pluginId, workingDirectory);
-          if (!existing) return { id, type, success: false, error: 'Plugin file not found' };
-          writePluginDirFile({ fileName: existing.fileName, scope: existing.scope, content: body?.content }, workingDirectory, { overwrite: true });
-        } else if (normalizedMethod === 'DELETE') {
-          if (!pluginId) return { id, type, success: false, error: 'Plugin file id is required' };
-          deletePluginDirFile(pluginId, workingDirectory);
-        } else {
-          return { id, type, success: false, error: `Unsupported method: ${normalizedMethod}` };
-        }
-        return {
-          id,
-          type,
-          success: true,
-          data: pluginMutationPayload('Plugin file changed'),
-        };
-      }
-
-      return { id, type, success: false, error: 'Unsupported plugin config request' };
-    }
 
     case 'api:config/snippets': {
       const { method, name, body, directory } = (payload || {}) as {

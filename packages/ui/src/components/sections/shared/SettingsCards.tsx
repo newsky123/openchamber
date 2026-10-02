@@ -14,7 +14,7 @@ import { cn } from '@/lib/utils';
 
 /**
  * Card grid for Settings pages that browse a set of things with a glanceable
- * state (providers, MCP servers, plugins): a grid of cards, each opening a
+ * state (providers, MCP servers): a grid of cards, each opening a
  * detail screen with a back arrow. Pages that edit long text keep the
  * list-plus-editor layout instead.
  */

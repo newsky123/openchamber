@@ -55,7 +55,7 @@ Select code in the editor, right-click, and find the **OpenChamber** submenu:
 
 ## Requirements
 
-- [OpenCode CLI](https://opencode.ai) installed and available in PATH (or set `OPENCODE_BINARY` env var)
+- A matching OpenCode build with `--compiled-plugins-only`, available in PATH or selected through `OPENCODE_BINARY`. This branch rejects stock managed CLIs that lack the feature before they load project plugins. External configured servers keep their existing lifecycle.
 - VS Code 1.85+
 
 <details>

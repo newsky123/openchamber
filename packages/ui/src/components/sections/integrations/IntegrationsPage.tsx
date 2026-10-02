@@ -10,7 +10,6 @@ import { isGuestActive } from '@/lib/guests/capabilities';
 import { isMobileSurfaceRuntime } from '@/lib/runtimeSurface';
 import { GitHubIntegration } from './GitHubIntegration';
 import { LinearSettings } from './LinearSettings';
-import { ThirdPartyIntegrationsSection } from './ThirdPartyIntegrationsSection';
 import { CatalogExtensionsSection } from './CatalogExtensionsSection';
 
 export const IntegrationsPage: React.FC = () => {
@@ -45,7 +44,6 @@ export const IntegrationsPage: React.FC = () => {
           {builtInGuests.map((guest) => <GuestIntegrationCard key={`${runtimeKey}:${guest.id}`} guest={guest} />)}
         </SettingsSection>
       ) : null}
-      <ThirdPartyIntegrationsSection divider={hasBuiltIn} />
       <CatalogExtensionsSection />
       <GuestIntegrationsSection />
     </SettingsPageLayout>

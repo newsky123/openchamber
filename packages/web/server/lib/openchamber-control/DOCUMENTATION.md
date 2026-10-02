@@ -3,7 +3,7 @@
 ## Purpose
 
 This module owns the typed control contract shared by the OpenChamber CLI and
-the managed OpenCode `openchamber` tool. Both adapters delegate to
+the compiled OpenCode `openchamber` tool. Both adapters delegate to
 `createOpenChamberControlService()`; neither adapter may call or spawn the
 other.
 
@@ -20,7 +20,8 @@ other.
   cancellation.
 - `../agent-tool/runtime.js` is the managed-tool adapter. It wraps service
   results in the versioned native-tool envelope and uses a separate ephemeral
-  loopback credential.
+  callback capability delivered through private stdin. It validates the engine
+  caller session by exact ID and checks current tool switches before dispatch.
 - `../openchamber-sessions/routes.js` and `../scheduled-tasks/service.js` own
   their domain operations and are composed into this service.
 

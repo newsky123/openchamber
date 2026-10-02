@@ -6,7 +6,7 @@ which primitive to reach for.
 
 ## Autosave on the OpenCode configuration pages
 
-`agents/`, `commands/`, `skills/`, `mcp/`, `plugins/` and `behavior/` edit files
+`agents/`, `commands/`, `skills/`, `mcp/` and `behavior/` edit files
 that OpenCode v2 watches: it picks up a change and applies it within a second or
 two, and the server answers every config mutation with a plain
 `{ success, message }`. There is no restart to wait for and no restart state to
@@ -20,7 +20,7 @@ The contract, implemented by `shared/SettingsAutosave.tsx`:
 - Text fields write when they lose focus. `SettingsPageLayout` takes the hook's
   `onBlurCapture`, which fires for any input, textarea or editor inside the
   page, so individual fields need no handler. Long editors (the skill document,
-  a plugin file) also write on Cmd/Ctrl+Enter.
+  for example) also write on Cmd/Ctrl+Enter.
 - A page's save routine compares the form against what it last wrote and returns
   `AUTOSAVE_UNCHANGED`, `AUTOSAVE_SAVED` or `autosaveFailed(reason)`. Success is
   silent and there is no inline "Saving…"/"Saved" indicator: a write is not
@@ -44,7 +44,7 @@ save promise settles, while the user is already editing the next version.
 Commands compare incoming values with both the saved baseline and the normalized
 submitted snapshot. Successful saves keep that normalized baseline for late
 echoes. Agents and MCP preserve dirty drafts and their baseline during refreshes
-of the same entity; successful saves advance that baseline. Skills and plugins
+of the same entity; successful saves advance that baseline. Skills
 preserve dirty drafts while updating their server baseline. A failed write leaves
 the form dirty for retry. Superseded skill detail reads are ignored.
 Behavior only normalizes the submitted prompt if the user has not changed it.
@@ -106,7 +106,6 @@ only ever sends v2.
 | Command | `template` (the markdown body), `description`, `agent`, `model` with `#variant`, `subagent` |
 | MCP server | `type` (required), `command` / `url`, `environment`, `headers`, `disabled`, `codemode`, `timeout: { startup, catalog, execution }`, snake_case `oauth` |
 | Provider | `package` with the `aisdk:` prefix, `settings.baseURL`, `headers`, `body`, models keyed by id with `modelID`, `capabilities`, `variants`, `cost.cache.read/write`, `disabled` |
-| Plugin | `{ package, options }`, serialized as a bare string when there are no options |
 
 Two consequences worth knowing:
 

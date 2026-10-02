@@ -23,6 +23,7 @@ const { createOpenCodeLifecycleRuntime } = await import('./lifecycle.js');
 const originalOpencodeBinary = process.env.OPENCODE_BINARY;
 const originalPath = process.env.PATH;
 const originalFetch = globalThis.fetch;
+const compiledPolicy = Object.freeze({ version: 1, compiledPluginsOnly: true, agentToolsBootstrap: 0 });
 
 afterEach(() => {
   spawnMock.mockReset();
@@ -132,6 +133,241 @@ const createRuntime = (overrides = {}, stateOverrides = {}, envOverrides = {}) =
 };
 
 describe('OpenCode lifecycle', () => {
+  it('filters approved loader controls from process, shell, and managed env after merges and during preflight', async () => {
+    const controls = ['NODE_OPTIONS', 'NODE_PATH', 'BUN_OPTIONS', 'BUN_BE_BUN', 'LD_PRELOAD', 'LD_AUDIT', 'DYLD_INSERT_LIBRARIES'];
+    const originals = Object.fromEntries(controls.map((key) => [key, process.env[key]]));
+    const shell = Object.fromEntries(controls.map((key) => [key.toLowerCase(), 'shell-loader']));
+    const managed = Object.fromEntries(controls.map((key) => [key[0] + key.slice(1).toLowerCase(), 'managed-loader']));
+    const check = vi.fn(async () => '2.0.21');
+    const replacement = createMockChild();
+    spawnMock.mockImplementation(() => {
+      queueMicrotask(() => replacement.stdout.emit('data', 'openchamber capabilities {"version":1,"compiledPluginsOnly":true,"agentToolsBootstrap":0}\nserver listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'));
+      return replacement;
+    });
+    let server;
+    try {
+      for (const key of controls) process.env[key] = 'process-loader';
+      const runtime = createRuntime({
+        checkOpenCodeBinary: check,
+        getManagedOpenCodeShellEnvSnapshot: () => ({ ...shell, SHELL_KEEP: 'shell' }),
+        getManagedOpenCodeEnv: async () => ({ ...managed, MANAGED_KEEP: 'managed' }),
+      });
+      server = await runtime.startOpenCode();
+      const preflightEnv = check.mock.calls[0][1].env;
+      const launchEnv = spawnMock.mock.calls[0][2].env;
+      for (const environment of [preflightEnv, launchEnv]) {
+        expect(Object.keys(environment).some((key) => controls.includes(key.toUpperCase()))).toBe(false);
+        expect(environment.SHELL_KEEP).toBe('shell');
+      }
+      expect(launchEnv.MANAGED_KEEP).toBe('managed');
+      expect(runtime.getManagedOpenCodeProcessEnv()).toBe(launchEnv);
+      for (const key of controls) expect(process.env[key]).toBe('process-loader');
+      expect(shell.node_options).toBe('shell-loader');
+      expect(managed.Node_options).toBe('managed-loader');
+    } finally {
+      await server?.close();
+      for (const [key, value] of Object.entries(originals)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+
+  it('leaves explicit external connections outside loader filtering and managed policy checks', async () => {
+    const original = process.env.NODE_OPTIONS;
+    const password = vi.fn();
+    const managedEnv = vi.fn();
+    const preflight = vi.fn();
+    process.env.NODE_OPTIONS = '--max-old-space-size=2048';
+    globalThis.fetch = vi.fn(async () => ({ ok: true, json: async () => ({ version: '2.0.21', pid: 1, urls: [], paths: { tmp: '/tmp' } }) }));
+    try {
+      const runtime = createRuntime({
+        setManagedOpenCodePassword: password, getManagedOpenCodeEnv: managedEnv,
+        checkOpenCodeBinary: preflight, reapManagedOrphanedProcesses: async () => ({ reaped: 0 }),
+      }, { isExternalOpenCode: true, isOpenCodeReady: true }, {
+        ENV_SKIP_OPENCODE_START: true, ENV_EFFECTIVE_PORT: 45678,
+      });
+      await runtime.bootstrapOpenCodeAtStartup();
+      expect(password).not.toHaveBeenCalled();
+      expect(managedEnv).not.toHaveBeenCalled();
+      expect(preflight).not.toHaveBeenCalled();
+      expect(spawnMock).not.toHaveBeenCalled();
+      expect(process.env.NODE_OPTIONS).toBe('--max-old-space-size=2048');
+      expect(runtime.testState.isOpenCodeReady).toBe(true);
+    } finally {
+      if (original === undefined) delete process.env.NODE_OPTIONS;
+      else process.env.NODE_OPTIONS = original;
+    }
+  });
+
+  for (const policy of [undefined, { version: 1, compiledPluginsOnly: false, agentToolsBootstrap: 0 }, { version: 2, compiledPluginsOnly: true, agentToolsBootstrap: 0 }]) {
+    it(`retires an unverified healthy HMR process before health or warmup: ${JSON.stringify(policy)}`, async () => {
+      const close = vi.fn(async () => {});
+      const legacy = { pid: null, managedStartupCapabilities: policy, close };
+      const password = vi.fn();
+      const replacement = createMockChild();
+      spawnMock.mockImplementation(() => {
+        expect(close).toHaveBeenCalledOnce();
+        queueMicrotask(() => replacement.stdout.emit('data', 'openchamber capabilities {"version":1,"compiledPluginsOnly":true,"agentToolsBootstrap":0}\nserver listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'));
+        return replacement;
+      });
+      const runtime = createRuntime({
+        setManagedOpenCodePassword: password,
+        reapManagedOrphanedProcesses: async () => {
+          expect(runtime.testState.isOpenCodeReady).toBe(false);
+          expect(password).toHaveBeenLastCalledWith(null);
+          return { reaped: 0 };
+        },
+        getWarmupDirectories: async () => ['/tmp/project'],
+      }, { openCodeProcess: legacy, openCodePort: 45678, isOpenCodeReady: true }, { ENV_EFFECTIVE_PORT: null });
+      // Constructor revokes old readiness before any asynchronous bootstrap.
+      expect(runtime.testState.isOpenCodeReady).toBe(false);
+      expect(password).toHaveBeenLastCalledWith(null);
+      globalThis.fetch = vi.fn(async () => {
+        expect(runtime.testState.openCodeProcess).not.toBe(legacy);
+        expect(runtime.testState.openCodeProcess.managedStartupCapabilities).toEqual(compiledPolicy);
+        return { ok: true, json: async () => ({ version: '2.0.21', pid: 1, urls: [], paths: { tmp: '/tmp' } }) };
+      });
+      await runtime.bootstrapOpenCodeAtStartup();
+      expect(close).toHaveBeenCalledOnce();
+      expect(spawnMock).toHaveBeenCalledOnce();
+      expect(runtime.testState.isOpenCodeReady).toBe(true);
+      await runtime.testState.openCodeProcess.close();
+    });
+  }
+
+  it('reuses a proven HMR handle and preserves its credential without spawning', async () => {
+    const close = vi.fn(async () => {});
+    const proven = { pid: null, managedStartupCapabilities: compiledPolicy, close };
+    const password = vi.fn();
+    const sharedState = createRuntime().testState;
+    Object.assign(sharedState, { openCodeProcess: proven, openCodePort: 45678, isOpenCodeReady: true });
+    const runtime = createRuntime({ state: sharedState, setManagedOpenCodePassword: password, reapManagedOrphanedProcesses: async () => ({ reaped: 0 }) });
+    globalThis.fetch = vi.fn(async () => ({ ok: true, json: async () => ({ version: '2.0.21', pid: 1, urls: [], paths: { tmp: '/tmp' } }) }));
+    expect(await runtime.startOpenCode()).toBe(proven);
+    await runtime.bootstrapOpenCodeAtStartup();
+    expect(sharedState.openCodeProcess).toBe(proven);
+    expect(sharedState.isOpenCodeReady).toBe(true);
+    expect(password).not.toHaveBeenCalled();
+    expect(close).not.toHaveBeenCalled();
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  for (const pendingKey of ['currentStartPromise', 'currentRestartPromise']) {
+    it(`revalidates a legacy handle after inherited ${pendingKey} resolves`, async () => {
+      const close = vi.fn(async () => {});
+      const legacy = { pid: null, close };
+      const sharedState = createRuntime().testState;
+      let release;
+      sharedState[pendingKey] = new Promise((resolve) => { release = resolve; });
+      const runtime = createRuntime({ state: sharedState });
+      spawnMock.mockImplementation(() => {
+        expect(close).toHaveBeenCalledOnce();
+        const replacement = createMockChild();
+        queueMicrotask(() => replacement.stdout.emit('data', 'openchamber capabilities {"version":1,"compiledPluginsOnly":true,"agentToolsBootstrap":0}\nserver listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'));
+        return replacement;
+      });
+      const starting = runtime.startOpenCode();
+      Object.assign(sharedState, { openCodeProcess: legacy, openCodePort: 45678, isOpenCodeReady: true });
+      release(legacy);
+      const server = await starting;
+      expect(server).not.toBe(legacy);
+      expect(server.managedStartupCapabilities).toEqual(compiledPolicy);
+      expect(close).toHaveBeenCalledOnce();
+      await server.close();
+    });
+  }
+
+  for (const pendingKey of ['currentStartPromise', 'currentRestartPromise']) {
+    for (const entry of ['startOpenCode', 'bootstrapOpenCodeAtStartup']) {
+      it(`retires an unknown child when ${entry} joins rejected ${pendingKey}`, async () => {
+        let reject;
+        let finishClose;
+        const closing = new Promise((resolve) => { finishClose = resolve; });
+        const close = vi.fn(() => closing);
+        const legacy = { pid: null, close };
+        const sharedState = createRuntime().testState;
+        Object.assign(sharedState, { openCodeProcess: legacy, openCodePort: 45678, isOpenCodeReady: true });
+        sharedState[pendingKey] = new Promise((_resolve, rejectPromise) => { reject = rejectPromise; });
+        const warmup = vi.fn(async () => ['/tmp/must-not-open']);
+        const runtime = createRuntime({ state: sharedState, getWarmupDirectories: warmup });
+        globalThis.fetch = vi.fn();
+        let settled = false;
+        const waiting = runtime[entry]().then(() => { settled = true; return null; }, (error) => { settled = true; return error; });
+        reject(new Error('PRIVATE-INHERITED-FAILURE'));
+        await expect.poll(() => close.mock.calls.length).toBe(1);
+        expect(settled).toBe(false);
+        expect(sharedState.openCodeProcess).toBe(legacy);
+        finishClose();
+        const error = await waiting;
+        if (entry === 'startOpenCode') expect(error.message).toContain('inherited OpenCode startup operation failed');
+        else expect(sharedState.lastOpenCodeError).toContain('inherited OpenCode startup operation failed');
+        expect(String(error?.message || sharedState.lastOpenCodeError)).not.toContain('PRIVATE-INHERITED-FAILURE');
+        expect(sharedState.openCodeProcess).toBe(null);
+        expect(sharedState[pendingKey]).toBe(null);
+        expect(sharedState.isOpenCodeReady).toBe(false);
+        expect(globalThis.fetch).not.toHaveBeenCalled();
+        expect(warmup).not.toHaveBeenCalled();
+        expect(spawnMock).not.toHaveBeenCalled();
+        // Settled legacy promises cannot trap a later explicit restart in a loop.
+        spawnMock.mockImplementation(() => {
+          expect(close).toHaveBeenCalledOnce();
+          const replacement = createMockChild();
+          queueMicrotask(() => replacement.stdout.emit('data', 'openchamber capabilities {"version":1,"compiledPluginsOnly":true,"agentToolsBootstrap":0}\nserver listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'));
+          return replacement;
+        });
+        const server = await runtime.startOpenCode();
+        expect(server.managedStartupCapabilities).toEqual(compiledPolicy);
+        await server.close();
+      });
+    }
+  }
+
+  it('retains ownership and blocks startup if rejected-HMR cleanup cannot close its child', async () => {
+    const close = vi.fn(async () => { throw new Error('PRIVATE-CLOSE-FAILURE'); });
+    const legacy = { pid: null, close };
+    let reject;
+    const pending = new Promise((_resolve, rejectPromise) => { reject = rejectPromise; });
+    const runtime = createRuntime({}, { openCodeProcess: legacy, currentStartPromise: pending, isOpenCodeReady: true });
+    const result = runtime.startOpenCode().catch((error) => error);
+    reject(new Error('PRIVATE-INHERITED-FAILURE'));
+    const error = await result;
+    expect(error.message).toBe('The unverified managed OpenCode process could not be stopped. Managed startup remains blocked.');
+    expect(runtime.testState.openCodeProcess).toBe(legacy);
+    expect(runtime.testState.currentStartPromise).toBe(null);
+    expect(runtime.testState.isOpenCodeReady).toBe(false);
+    expect(close).toHaveBeenCalledOnce();
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  for (const external of [false, true]) {
+    it(`preserves a ${external ? 'external' : 'proven'} replacement when an older operation rejects`, async () => {
+      let reject;
+      const pending = new Promise((_resolve, rejectPromise) => { reject = rejectPromise; });
+      const password = vi.fn();
+      const runtime = createRuntime({ setManagedOpenCodePassword: password }, { currentRestartPromise: pending });
+      const result = runtime.startOpenCode().catch((error) => error);
+      const close = vi.fn(async () => {});
+      const replacement = { pid: null, close, ...(external ? {} : { managedStartupCapabilities: compiledPolicy }) };
+      Object.assign(runtime.testState, { openCodeProcess: replacement, isExternalOpenCode: external, isOpenCodeReady: true });
+      reject(new Error('PRIVATE-INHERITED-FAILURE'));
+      expect((await result).message).not.toContain('PRIVATE-INHERITED-FAILURE');
+      expect(runtime.testState.openCodeProcess).toBe(replacement);
+      expect(runtime.testState.isOpenCodeReady).toBe(true);
+      expect(close).not.toHaveBeenCalled();
+      expect(password).not.toHaveBeenCalled();
+      expect(spawnMock).not.toHaveBeenCalled();
+    });
+  }
+
+  it('fails closed when an unverified handle has no owned close operation', async () => {
+    const runtime = createRuntime({}, { openCodeProcess: { pid: null }, openCodePort: 45678, isOpenCodeReady: true });
+    await expect(runtime.startOpenCode()).rejects.toThrow('no verified compiled-only');
+    await expect(runtime.waitForOpenCodeReady()).rejects.toThrow('no verified compiled-only');
+    expect(runtime.testState.isOpenCodeReady).toBe(false);
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
   it('honors shutdown from a reloaded HMR owner while the old startup is pending', async () => {
     const sharedState = createRuntime().testState;
     let releasePreflight;
@@ -151,7 +387,7 @@ describe('OpenCode lifecycle', () => {
     const preflight = new Promise((resolve) => { releasePreflight = resolve; });
     spawnMock.mockImplementation(() => {
       const child = createMockChild();
-      queueMicrotask(() => child.stdout.emit('data', 'server listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'));
+      queueMicrotask(() => child.stdout.emit('data', 'openchamber capabilities {"version":1,"compiledPluginsOnly":true,"agentToolsBootstrap":0}\nserver listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'));
       return child;
     });
     globalThis.fetch = vi.fn(async () => ({ ok: true, json: async () => ({ version: '2.0.21' }) }));
@@ -177,7 +413,7 @@ describe('OpenCode lifecycle', () => {
     const setManagedOpenCodePassword = vi.fn();
     spawnMock.mockImplementation(() => {
       const child = createMockChild();
-      queueMicrotask(() => child.stdout.emit('data', 'server listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'));
+      queueMicrotask(() => child.stdout.emit('data', 'openchamber capabilities {"version":1,"compiledPluginsOnly":true,"agentToolsBootstrap":0}\nserver listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'));
       return child;
     });
     const runtime = createRuntime({ setManagedOpenCodePassword });
@@ -197,7 +433,7 @@ describe('OpenCode lifecycle', () => {
       const child = createMockChild();
       children.push(child);
       const password = children.length === 1 ? 'a'.repeat(43) : 'b'.repeat(43);
-      queueMicrotask(() => child.stdout.emit('data', `server listening on http://127.0.0.1:45678\nserver password ${password}\n`));
+      queueMicrotask(() => child.stdout.emit('data', `openchamber capabilities {"version":1,"compiledPluginsOnly":true,"agentToolsBootstrap":0}\nserver listening on http://127.0.0.1:45678\nserver password ${password}\n`));
       return child;
     });
     globalThis.fetch = vi.fn(async () => ({ ok: false }));
@@ -216,7 +452,7 @@ describe('OpenCode lifecycle', () => {
   it('never lets an obsolete process close revoke the authoritative replacement auth after HMR', async () => {
     const child = createMockChild();
     spawnMock.mockImplementation(() => {
-      queueMicrotask(() => child.stdout.emit('data', 'server listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'));
+      queueMicrotask(() => child.stdout.emit('data', 'openchamber capabilities {"version":1,"compiledPluginsOnly":true,"agentToolsBootstrap":0}\nserver listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'));
       return child;
     });
     const setManagedOpenCodePassword = vi.fn();
@@ -239,7 +475,7 @@ describe('OpenCode lifecycle', () => {
       .mockReturnValueOnce(binaries[1]);
     spawnMock.mockImplementation(() => {
       const child = createMockChild();
-      queueMicrotask(() => child.stdout.emit('data', 'server listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'));
+      queueMicrotask(() => child.stdout.emit('data', 'openchamber capabilities {"version":1,"compiledPluginsOnly":true,"agentToolsBootstrap":0}\nserver listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'));
       return child;
     });
     globalThis.fetch = vi.fn(async () => ({ ok: false }));
@@ -438,6 +674,7 @@ describe('OpenCode lifecycle', () => {
     const runtime = createRuntime({ now: () => now }, {
       openCodePort: 45678,
       openCodeProcess: {
+        managedStartupCapabilities: compiledPolicy,
         pid: null,
         exitCode: null,
         signalCode: null,
@@ -496,6 +733,7 @@ describe('OpenCode lifecycle', () => {
     const runtime = createRuntime({}, {
       openCodePort: 45678,
       openCodeProcess: {
+        managedStartupCapabilities: compiledPolicy,
         pid: process.pid,
         exitCode: null,
         signalCode: null,
@@ -526,6 +764,7 @@ describe('OpenCode lifecycle', () => {
     const runtime = createRuntime({}, {
       openCodePort: 45678,
       openCodeProcess: {
+        managedStartupCapabilities: compiledPolicy,
         pid: process.pid,
         close,
       },
@@ -549,13 +788,14 @@ describe('OpenCode lifecycle', () => {
     }));
     spawnMock.mockImplementationOnce(() => {
       queueMicrotask(() => {
-        replacement.stdout.emit('data', 'server listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n');
+        replacement.stdout.emit('data', 'openchamber capabilities {"version":1,"compiledPluginsOnly":true,"agentToolsBootstrap":0}\nserver listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n');
       });
       return replacement;
     });
     const runtime = createRuntime({}, {
       openCodePort: 45678,
       openCodeProcess: {
+        managedStartupCapabilities: compiledPolicy,
         pid: null,
         exitCode: 1,
         signalCode: null,
@@ -579,13 +819,14 @@ describe('OpenCode lifecycle', () => {
     }));
     spawnMock.mockImplementationOnce(() => {
       queueMicrotask(() => {
-        replacement.stdout.emit('data', 'server listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n');
+        replacement.stdout.emit('data', 'openchamber capabilities {"version":1,"compiledPluginsOnly":true,"agentToolsBootstrap":0}\nserver listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n');
       });
       return replacement;
     });
     const runtime = createRuntime({ onOpenCodeRestarted }, {
       openCodePort: 45678,
       openCodeProcess: {
+        managedStartupCapabilities: compiledPolicy,
         pid: null,
         exitCode: 1,
         signalCode: null,
@@ -613,13 +854,13 @@ describe('OpenCode lifecycle', () => {
     }));
     spawnMock.mockImplementationOnce(() => {
       queueMicrotask(() => {
-        firstChild.stdout.emit('data', 'server listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n');
+        firstChild.stdout.emit('data', 'openchamber capabilities {"version":1,"compiledPluginsOnly":true,"agentToolsBootstrap":0}\nserver listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n');
       });
       return firstChild;
     });
     spawnMock.mockImplementationOnce(() => {
       queueMicrotask(() => {
-        replacement.stdout.emit('data', 'server listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n');
+        replacement.stdout.emit('data', 'openchamber capabilities {"version":1,"compiledPluginsOnly":true,"agentToolsBootstrap":0}\nserver listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n');
       });
       return replacement;
     });
@@ -676,13 +917,13 @@ describe('OpenCode lifecycle', () => {
     }));
     spawnMock.mockImplementationOnce(() => {
       queueMicrotask(() => {
-        firstChild.stdout.emit('data', 'server listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n');
+        firstChild.stdout.emit('data', 'openchamber capabilities {"version":1,"compiledPluginsOnly":true,"agentToolsBootstrap":0}\nserver listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n');
       });
       return firstChild;
     });
     spawnMock.mockImplementationOnce(() => {
       queueMicrotask(() => {
-        replacement.stdout.emit('data', 'server listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n');
+        replacement.stdout.emit('data', 'openchamber capabilities {"version":1,"compiledPluginsOnly":true,"agentToolsBootstrap":0}\nserver listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n');
       });
       return replacement;
     });
@@ -737,6 +978,7 @@ describe('OpenCode lifecycle', () => {
     const runtime = createRuntime({ onOpenCodeRestarted }, {
       openCodePort: 45678,
       openCodeProcess: {
+        managedStartupCapabilities: compiledPolicy,
         pid: null,
         exitCode: 1,
         signalCode: null,
@@ -756,7 +998,7 @@ describe('OpenCode lifecycle', () => {
     const child = createMockChild();
     spawnMock.mockImplementationOnce(() => {
       queueMicrotask(() => {
-        child.stdout.emit('data', 'server listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n');
+        child.stdout.emit('data', 'openchamber capabilities {"version":1,"compiledPluginsOnly":true,"agentToolsBootstrap":0}\nserver listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n');
       });
       return child;
     });
@@ -766,7 +1008,7 @@ describe('OpenCode lifecycle', () => {
     const [binary, args, options] = spawnMock.mock.calls[0];
 
     expect(binary).toBe('opencode');
-    expect(args).toEqual(['serve', '--hostname', '127.0.0.1', '--port', '45678']);
+    expect(args).toEqual(['serve', '--compiled-plugins-only', '--hostname', '127.0.0.1', '--port', '45678']);
     expect(options.env.PATH).toBe('/home/user/.bun/bin:/usr/local/bin:/usr/bin');
     expect(options.env.SHELL_ONLY).toBe('yes');
     expect(options.env.OPENCODE_PASSWORD).toBeUndefined();
@@ -783,7 +1025,7 @@ describe('OpenCode lifecycle', () => {
     const child = createMockChild();
     spawnMock.mockImplementationOnce(() => {
       queueMicrotask(() => {
-        child.stdout.emit('data', 'server listening on http://0.0.0.0:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n');
+        child.stdout.emit('data', 'openchamber capabilities {"version":1,"compiledPluginsOnly":true,"agentToolsBootstrap":0}\nserver listening on http://0.0.0.0:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n');
       });
       return child;
     });
@@ -793,7 +1035,7 @@ describe('OpenCode lifecycle', () => {
     const [binary, args] = spawnMock.mock.calls[0];
 
     expect(binary).toBe('opencode');
-    expect(args).toEqual(['serve', '--hostname', '0.0.0.0', '--port', '45678']);
+    expect(args).toEqual(['serve', '--compiled-plugins-only', '--hostname', '0.0.0.0', '--port', '45678']);
 
     await server.close();
     expect(server.signalCode).toBe('SIGTERM');
@@ -807,7 +1049,7 @@ describe('OpenCode lifecycle', () => {
     const child = createMockChild();
     spawnMock.mockImplementationOnce(() => {
       queueMicrotask(() => {
-        child.stdout.emit('data', 'server listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n');
+        child.stdout.emit('data', 'openchamber capabilities {"version":1,"compiledPluginsOnly":true,"agentToolsBootstrap":0}\nserver listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n');
       });
       return child;
     });
@@ -835,7 +1077,7 @@ describe('OpenCode lifecycle', () => {
     const child = createMockChild();
     spawnMock.mockImplementationOnce(() => {
       queueMicrotask(() => {
-        child.stdout.emit('data', 'server listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n');
+        child.stdout.emit('data', 'openchamber capabilities {"version":1,"compiledPluginsOnly":true,"agentToolsBootstrap":0}\nserver listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n');
       });
       return child;
     });
@@ -866,7 +1108,7 @@ describe('OpenCode lifecycle', () => {
     const child = createMockChild();
     spawnMock.mockImplementationOnce(() => {
       queueMicrotask(() => {
-        child.stdout.emit('data', 'server listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n');
+        child.stdout.emit('data', 'openchamber capabilities {"version":1,"compiledPluginsOnly":true,"agentToolsBootstrap":0}\nserver listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n');
       });
       return child;
     });
@@ -884,7 +1126,7 @@ describe('OpenCode lifecycle', () => {
 
     expect(getManagedOpenCodeEnv).toHaveBeenCalledOnce();
     expect(options.env.OPENCODE_CONFIG_CONTENT).toBe('{"plugin":["file:///tool.js"]}');
-    expect(options.env.OPENCHAMBER_AGENT_TOOL_TOKEN).toBe('ephemeral');
+    expect(options.env.OPENCHAMBER_AGENT_TOOL_TOKEN).toBeUndefined();
     expect(options.env.PATH).toBe('/home/user/.bun/bin:/usr/local/bin:/usr/bin');
     expect(options.env.OPENCODE_PASSWORD).toBeUndefined();
     expect(options.env.OPENCODE_SERVER_PASSWORD).toBeUndefined();
@@ -904,7 +1146,7 @@ describe('OpenCode lifecycle', () => {
       const child = createMockChild();
       spawnMock.mockImplementationOnce(() => {
         queueMicrotask(() => {
-          child.stdout.emit('data', 'server listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n');
+          child.stdout.emit('data', 'openchamber capabilities {"version":1,"compiledPluginsOnly":true,"agentToolsBootstrap":0}\nserver listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n');
         });
         return child;
       });
@@ -942,7 +1184,7 @@ describe('OpenCode lifecycle', () => {
     const child = createMockChild();
     spawnMock.mockImplementationOnce(() => {
       queueMicrotask(() => {
-        child.stdout.emit('data', 'server listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n');
+        child.stdout.emit('data', 'openchamber capabilities {"version":1,"compiledPluginsOnly":true,"agentToolsBootstrap":0}\nserver listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n');
       });
       return child;
     });
@@ -965,7 +1207,7 @@ describe('OpenCode lifecycle', () => {
     const child = createMockChild();
     spawnMock.mockImplementationOnce(() => {
       queueMicrotask(() => {
-        child.stdout.emit('data', 'server listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n');
+        child.stdout.emit('data', 'openchamber capabilities {"version":1,"compiledPluginsOnly":true,"agentToolsBootstrap":0}\nserver listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n');
       });
       return child;
     });
@@ -1033,7 +1275,7 @@ describe('OpenCode lifecycle', () => {
     });
     spawnMock.mockImplementationOnce(() => {
       queueMicrotask(() => {
-        secondChild.stdout.emit('data', 'server listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n');
+        secondChild.stdout.emit('data', 'openchamber capabilities {"version":1,"compiledPluginsOnly":true,"agentToolsBootstrap":0}\nserver listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n');
       });
       return secondChild;
     });
@@ -1054,7 +1296,7 @@ describe('OpenCode lifecycle', () => {
     spawnMock.mockImplementation(() => {
       calls.push('spawn');
       const child = createMockChild();
-      queueMicrotask(() => child.stdout.emit('data', 'server listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'));
+      queueMicrotask(() => child.stdout.emit('data', 'openchamber capabilities {"version":1,"compiledPluginsOnly":true,"agentToolsBootstrap":0}\nserver listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'));
       return child;
     });
     globalThis.fetch = vi.fn(async () => ({ ok: false }));
@@ -1147,7 +1389,7 @@ it('shares the managed CLI preflight with desktop while startup is pending', asy
   });
   spawnMock.mockImplementation(() => {
     const child = createMockChild();
-    queueMicrotask(() => child.stdout.emit('data', 'server listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'));
+    queueMicrotask(() => child.stdout.emit('data', 'openchamber capabilities {"version":1,"compiledPluginsOnly":true,"agentToolsBootstrap":0}\nserver listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'));
     return child;
   });
   expect(await runtime.getManagedOpenCodePreflight()).toBe(false);

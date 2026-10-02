@@ -10,6 +10,7 @@ import { OpenChamberControlError } from './error.js';
 const createService = (overrides = {}) => {
   const client = {
     session: {
+      get: vi.fn(async () => null),
       list: vi.fn(async () => ({ data: [] })),
       active: vi.fn(async () => ({})),
     },
@@ -143,14 +144,9 @@ describe('OpenChamber control service', () => {
     expect(sessionService[method]).toHaveBeenCalledWith('ses_1', { directory: '/repo', prompt: 'Continue' });
   });
 
-  it('resolves the target session directory from the global session list when send omits it', async () => {
+  it('resolves the target session directory by exact ID when send omits it', async () => {
     const { service, sessionService, client } = createService();
-    client.session.list.mockResolvedValue({
-      data: [
-        { id: 'ses_other', location: { directory: '/repo/worktrees/other' } },
-        { id: 'ses_target', location: { directory: '/repo/worktrees/target' } },
-      ],
-    });
+    client.session.get.mockResolvedValue({ id: 'ses_target', location: { directory: '/repo/worktrees/target' } });
     sessionService.send.mockResolvedValue({ sessionId: 'ses_target', directory: '/repo/worktrees/target', promptDispatched: true });
 
     await service.execute('session.send', { sessionId: 'ses_target', prompt: 'Continue' }, '/repo');
@@ -158,7 +154,7 @@ describe('OpenChamber control service', () => {
     expect(sessionService.send).toHaveBeenCalledWith('ses_target', { directory: '/repo/worktrees/target', prompt: 'Continue' });
   });
 
-  it('falls back to the context directory when the session is not in the global list', async () => {
+  it('falls back to the context directory when the target session cannot be resolved', async () => {
     const { service, sessionService } = createService();
     sessionService.send.mockResolvedValue({ sessionId: 'ses_unknown', directory: '/repo', promptDispatched: true });
 

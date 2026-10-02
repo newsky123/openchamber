@@ -24,8 +24,6 @@ import { WebSearchPage } from '@/components/sections/websearch/WebSearchPage';
 import { CommandsSidebar } from '@/components/sections/commands/CommandsSidebar';
 import { CommandsPage } from '@/components/sections/commands/CommandsPage';
 import { McpPage } from '@/components/sections/mcp/McpPage';
-import { PluginsPage } from '@/components/sections/plugins';
-import { usePluginsStore } from '@/stores/usePluginsStore';
 import { SkillsSidebar } from '@/components/sections/skills/SkillsSidebar';
 import { SkillsPage } from '@/components/sections/skills/SkillsPage';
 import { ProjectsSidebar } from '@/components/sections/projects/ProjectsSidebar';
@@ -119,7 +117,6 @@ const pageOrder: SettingsPageSlug[] = [
   'behavior',
   'commands',
   'mcp',
-  'plugins',
   // 'content' group — Library
   'magic-prompts',
   'snippets',
@@ -196,7 +193,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
   const openSettingsShortcutOverride = useUIStore((state) => state.shortcutOverrides.open_settings);
   const settingsSlug = resolveSettingsSlug(settingsPageRaw);
 
-  const [mobileStage, setMobileStage] = React.useState<MobileStage>(initialMobileStage);
+  const [mobileStage, setMobileStage] = React.useState<MobileStage>(settingsSlug === 'home' ? 'nav' : initialMobileStage);
   // Seed with the mount-time slug when opening at the nav stage: the slug
   // persists across opens, and the deep-link auto-jump below must react only
   // to slug CHANGES after mount — not re-enter the previously visited page
@@ -207,7 +204,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
   // settingsPage persists in the UI store, so subsequent opens restore the
   // last visited page. Mobile keeps 'home' — its entry stage is the nav list.
   React.useEffect(() => {
-    if (!isMobile && settingsSlug === 'home') {
+    if (settingsSlug !== 'home') return;
+    // Retired or unknown deep links resolve to the root, including on mobile.
+    if (isMobile) {
+      setMobileStage('nav');
+    } else {
       setSettingsPage('general');
     }
   }, [isMobile, setSettingsPage, settingsSlug]);
@@ -288,10 +289,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
       void useMcpConfigStore.getState().loadMcpConfigs({ directory: settingsDirectory });
       return;
     }
-    if (settingsSlug === 'plugins') {
-      void usePluginsStore.getState().loadPlugins();
-      return;
-    }
     if (settingsSlug === 'skills.installed' || settingsSlug === 'skills.catalog') {
       void useSkillsStore.getState().loadSkills(settingsDirectory);
       void useSkillsCatalogStore.getState().loadCatalog();
@@ -357,8 +354,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
         return t('settings.page.commands.title');
       case 'mcp':
         return t('settings.page.mcp.title');
-      case 'plugins':
-        return t('settings.page.plugins.title');
       case 'skills.installed':
         return t('settings.page.skills.title');
       case 'skills.catalog':
@@ -479,10 +474,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
       useUIStore.getState().setSettingsProvidersClassificationRequested(true);
     }
 
-    if (result.id === 'plugins.create') {
-      return 'plugins.spec';
-    }
-
     return result.id;
   }, []);
 
@@ -528,11 +519,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
     openPage(result.page);
     if (isMobile) {
       setMobileStage('page-content');
-    }
-    if (result.id === 'plugins.create' && typeof window !== 'undefined') {
-      window.setTimeout(() => {
-        window.dispatchEvent(new CustomEvent('openchamber:settings-open-plugin-add'));
-      }, 50);
     }
   }, [isMobile, openPage, prepareSettingsSearchTarget]);
 
@@ -680,8 +666,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
         return <CommandsPage />;
       case 'mcp':
         return <McpPage />;
-      case 'plugins':
-        return <PluginsPage />;
       case 'skills.installed':
         return <SkillsPage view="installed" />;
       case 'skills.catalog':

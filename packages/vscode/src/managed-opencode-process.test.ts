@@ -11,7 +11,7 @@ const alive = (pid: number) => {
 const readPids = async (marker: string) => (await fs.readFile(marker, 'utf8').catch(() => ''))
   .trim().split('\n').filter(Boolean).map(Number);
 
-for (const mode of ['timeout', 'malformed', 'missing_password', 'stderr_credentials', 'wrong_url', 'abort', 'close', 'ready', 'late_abort', 'exit']) {
+for (const mode of ['timeout', 'missing_capability', 'bootstrap_mismatch', 'malformed', 'missing_password', 'stderr_credentials', 'wrong_url', 'abort', 'close', 'ready', 'late_abort', 'exit']) {
   test(`managed ${mode} reaps parent and SIGTERM-resistant descendant`, async () => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'oc-vscode-managed-'));
     const marker = path.join(cwd, 'pids');
@@ -22,11 +22,13 @@ for (const mode of ['timeout', 'malformed', 'missing_password', 'stderr_credenti
     const readyMode = ['ready', 'late_abort', 'exit'].includes(mode);
     const privateDiagnostic = 'fixture-private-output-must-not-escape';
     let output = '';
-    if (mode === 'malformed') output = `process.stdout.write('server listening on http://127.0.0.1:45678\\nserver password invalid\\n');`;
-    if (mode === 'missing_password') output = `process.stdout.write('server listening on http://127.0.0.1:45678\\n');`;
-    if (mode === 'wrong_url') output = `process.stdout.write('server listening on http://127.0.0.1:45679\\nserver password ' + password + '\\n');`;
-    if (mode === 'stderr_credentials') output = `process.stderr.write('server listening on http://127.0.0.1:45678\\nserver password ' + password + '\\n');`;
-    if (readyMode) output = `process.stdout.write('server listening on http://127.0.0.1:45678\\nserver password ' + password + '\\n');`;
+    if (mode === 'missing_capability') output = `process.stdout.write('server listening on http://127.0.0.1:45678\\nserver password ' + password + '\\n');`;
+    if (mode === 'bootstrap_mismatch') output = `process.stdout.write('openchamber capabilities {"version":1,"compiledPluginsOnly":true,"agentToolsBootstrap":1}\\nserver listening on http://127.0.0.1:45678\\nserver password ' + password + '\\n');`;
+    if (mode === 'malformed') output = `process.stdout.write('openchamber capabilities {"version":1,"compiledPluginsOnly":true,"agentToolsBootstrap":0}\\nserver listening on http://127.0.0.1:45678\\nserver password invalid\\n');`;
+    if (mode === 'missing_password') output = `process.stdout.write('openchamber capabilities {"version":1,"compiledPluginsOnly":true,"agentToolsBootstrap":0}\\nserver listening on http://127.0.0.1:45678\\n');`;
+    if (mode === 'wrong_url') output = `process.stdout.write('openchamber capabilities {"version":1,"compiledPluginsOnly":true,"agentToolsBootstrap":0}\\nserver listening on http://127.0.0.1:45679\\nserver password ' + password + '\\n');`;
+    if (mode === 'stderr_credentials') output = `process.stderr.write('openchamber capabilities {"version":1,"compiledPluginsOnly":true,"agentToolsBootstrap":0}\\nserver listening on http://127.0.0.1:45678\\nserver password ' + password + '\\n');`;
+    if (readyMode) output = `process.stdout.write('openchamber capabilities {"version":1,"compiledPluginsOnly":true,"agentToolsBootstrap":0}\\nserver listening on http://127.0.0.1:45678\\nserver password ' + password + '\\n');`;
 
     const script = `
       require('node:fs').appendFileSync(${JSON.stringify(marker)}, process.pid + '\\n');
@@ -111,6 +113,11 @@ test('managed launches strip both password names, preserve provider env, and rot
     opencode_password: 'case-insensitive-password',
     OpenCode_Server_Password: 'mixed-case-password',
     OPENAI_API_KEY: 'fixture-provider-key',
+    NODE_OPTIONS: '--require=/nonexistent/fixture-preload.cjs', node_path: '/fixture/modules',
+    BUN_OPTIONS: '--preload=/fixture-preload.js', Bun_Be_Bun: '1',
+    LD_PRELOAD: '/fixture.so', ld_audit: '/audit.so', Dyld_Insert_Libraries: '/fixture.dylib',
+    OPENCHAMBER_AGENT_TOOL_TOKEN: 'legacy-agent-tool-secret',
+    openchamber_agent_tool_url: 'http://legacy.invalid',
   };
   const fixture = path.join(cwd, 'server.cjs');
   await fs.writeFile(fixture, `
@@ -119,7 +126,7 @@ test('managed launches strip both password names, preserve provider env, and rot
     const password = require('node:crypto').randomBytes(32).toString('base64url');
     const descendant = childProcess.execFileSync(process.execPath, ['-e', 'process.stdout.write(JSON.stringify({env: process.env, argv: process.argv}))'], { encoding: 'utf8' });
     fs.writeFileSync('observed.json', JSON.stringify({ env: process.env, argv: process.argv, descendant: JSON.parse(descendant) }));
-    process.stdout.write('server listening on http://127.0.0.1:45678\\nserver password ' + password + '\\n');
+    process.stdout.write('openchamber capabilities {"version":1,"compiledPluginsOnly":true,"agentToolsBootstrap":0}\\nserver listening on http://127.0.0.1:45678\\nserver password ' + password + '\\n');
     setInterval(() => { process.stdout.write('private trailing output\\n'); process.stderr.write('private trailing errors\\n'); }, 10);
   `);
   let server: ReturnType<typeof spawnManagedOpenCodeProcess> | null = null;
@@ -141,6 +148,9 @@ test('managed launches strip both password names, preserve provider env, and rot
       const observed = await fs.readFile(path.join(cwd, 'observed.json'), 'utf8');
       assert.equal(observed.includes(password), false, 'parent and descendant env/argv must not contain the generated secret');
       assert.equal(/opencode_(server_)?password/i.test(observed), false, 'both password names must be absent case-insensitively');
+      assert.equal(/openchamber_agent_tool_(token|url)/i.test(observed), false, 'legacy AgentTool environment must be absent');
+      assert.equal(/node_options|node_path|bun_options|bun_be_bun|ld_preload|ld_audit|dyld_insert_libraries/i.test(observed), false, 'managed loader controls must be absent');
+      assert.equal(inheritedEnv.NODE_OPTIONS, '--require=/nonexistent/fixture-preload.cjs');
       assert.equal(observed.includes('fixture-provider-key'), true, 'provider credentials still reach OpenCode');
       assert.equal(JSON.stringify(server).includes(password), false, 'serializing the process handle must not reveal its secret');
       assert.equal(process.env.OPENCODE_PASSWORD, 'external-server-password-must-stay-unchanged');
@@ -165,7 +175,7 @@ test('closing an older managed process cannot clear a concurrent process credent
   process.env.OPENCHAMBER_MANAGED_PROCESS_REGISTRY = path.join(cwd, 'registry');
   const script = `
     const password = require('node:crypto').randomBytes(32).toString('base64url');
-    process.stdout.write('server listening on http://127.0.0.1:45678\\nserver password ' + password + '\\n');
+    process.stdout.write('openchamber capabilities {"version":1,"compiledPluginsOnly":true,"agentToolsBootstrap":0}\\nserver listening on http://127.0.0.1:45678\\nserver password ' + password + '\\n');
     setInterval(() => {}, 1000);
   `;
   const olderAbort = new AbortController();

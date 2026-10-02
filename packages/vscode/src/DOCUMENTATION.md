@@ -30,7 +30,7 @@ Keep `bridge.ts` as a thin orchestration layer that delegates message handling t
 
 - `managed-opencode-process.ts` and `opencode.ts`
   - The process handle and shared registry entry exist from spawn, before readiness. Startup timeout, malformed output, and cancellation terminate the child before the attempt settles. Registry removal follows confirmed termination. Both child streams are private and drained for the full process lifetime. Startup errors contain fixed diagnostics, never raw child output.
-  - Managed launches remove `OPENCODE_PASSWORD` and `OPENCODE_SERVER_PASSWORD` case-insensitively after environment merges. OpenCode generates its password internally; the shared `packages/web/server/lib/opencode/managed-auth.js` parser accepts the adjacent listener/password records only for the requested endpoint. The process handle keeps auth in memory and clears it on close, failure, abort, or exit. Secrets never enter the extension host environment, child argv, registry, diagnostics, or webview state. External configured URLs keep their environment/service-password authentication.
+  - Managed launches pass `--compiled-plugins-only` and remove `OPENCODE_PASSWORD`, `OPENCODE_SERVER_PASSWORD`, `OPENCHAMBER_AGENT_TOOL_TOKEN`, and `OPENCHAMBER_AGENT_TOOL_URL` case-insensitively after environment merges. VS Code does not provide an AgentTool bootstrap. Its managed version preflight and final spawn also filter the finite loader-control list documented in the web lifecycle, including harmless `NODE_OPTIONS` values. Shell import, the global environment, and external-server commands keep their existing behavior. The binary and wrapper remain trusted. OpenCode generates its password internally; the shared `packages/web/server/lib/opencode/managed-auth.js` parser requires the compiled-only capability with bootstrap mode 0, then accepts the adjacent listener/password records only for the requested endpoint. The process handle keeps auth in memory and clears it on close, failure, abort, or exit. Secrets never enter the extension host environment, child argv, registry, diagnostics, or webview state. External configured URLs keep their environment/service-password authentication.
   - Manager operations run in order. Stop cancels in-flight readiness/health probes and invalidates older queued starts/restarts. A later explicit start can run after stop. Startup passes an explicit cwd to the child without changing the extension host's cwd.
   - Shutdown targets owned processes rather than whichever process happens to listen on a remembered port. External OpenCode receives no spawn or termination request.
   - `bridge-git-process-runtime.test.ts` and `managed-opencode-process.test.ts` use real subprocesses for repeated deadlines, signal exits, stdin EOF, large stderr, deactivation, startup failure, and resistant descendants. The manager was also exercised in an isolated macOS VS Code 1.137.0 extension host with a controlled server fixture. Before the fix, two restarts left two orphaned tool processes beside the active server and its tool. After the fix, only the active pair remained, and stop removed it. The complete fixed scenario created eight processes across startup, restarts, and cancellation, with none surviving. Native Windows process-tree behavior remains unverified on the macOS test host.
@@ -192,7 +192,7 @@ every surface reached only through those is unreachable.
 | Usage / quota page | MOUNTED | `SettingsView` → `UsagePage` (slug `usage`, no VS Code gate) |
 | Notifications settings | MOUNTED | `SettingsView` → slug `notifications` (no VS Code gate) |
 | MCP settings | MOUNTED | `SettingsView` → `McpSidebar` / `McpPage` |
-| Agents / commands / skills / plugins / providers / projects settings | MOUNTED | `SettingsView` page registry |
+| Agents / commands / skills / providers / projects settings | MOUNTED | `SettingsView` page registry |
 | Worktrees | PARTIAL | Create/remove reachable via `SessionSidebar` → `NewWorktreeDialog` and `sessionWorktreeMenu`. `WorktreesView` is `MainLayout`-only |
 | Git | PARTIAL | Read-only status/branches/log via `useGitStore` in `SessionSidebar`, `ChatInput`, `WorkStatusPrimaryGroup`. Stage/commit/push/history/merge/rebase live in `GitView` + `views/git/*`, cut off with `ContextPanel` |
 | Voice / dictation | PARTIAL | `ComposerDictation` renders in `ChatInput`; the `voice` settings page is VS Code-gated |
@@ -251,7 +251,11 @@ spawning a managed server and refuses to start on anything else
 start and serve a different API, leaving the user with a webview that loads and
 then fails every request, so the failure is reported up front instead.
 
-Managed readiness requires both `server listening on <url>` and the generated
+Managed launch requires the OpenChamber compiled-only engine build and always
+passes `--compiled-plugins-only`. A stock CLI rejects that flag before server
+startup; there is no unprotected fallback. Managed readiness requires a version-1
+`openchamber capabilities` record with `compiledPluginsOnly: true` and
+`agentToolsBootstrap: 0`, then `server listening on <url>` and the generated
 `server password <secret>` on the private stdout pipe, followed by an authenticated
 `GET /api/info` with a supported version. Health probes reject redirects. An
 incomplete handshake fails closed, terminates its owned process tree, and never
@@ -288,12 +292,19 @@ Ownership and the v1 fallback policy are documented once, in
   decodes (`agent`, `command`, `provider`, `mcp.<name>`, `plugin`,
   `permission`/`tools`). v2 wins when both exist.
 - Writes emit v2 only, into the v2 directory (`.opencode/agents/`,
-  `.opencode/commands/`, `.opencode/skills/<id>/`, `.opencode/plugins/`).
+  `.opencode/commands/`, `.opencode/skills/<id>/`).
 - Files are never moved. Updating an entity that lives in a v1 file rewrites it
   at its own path in v2 shape, and a v1 JSON entry moves to the v2 section key
   inside the same file. Every mutation returns the `path` it wrote.
 
 Bridge surface (`bridge-config-runtime.ts`), matching the web routes:
+
+- `api:config/plugins` always fails with `Dynamic OpenCode plugin configuration is unavailable.`
+  and `data.code: "dynamic_plugins_unavailable"`. The webview answers the retired
+  `/api/config/plugins` route family with HTTP 501 and the same error/code.
+  Neither path reads or changes existing plugin files or entries. Shared Settings
+  has no plugin configuration or installation UI. MCP and SDK Extensions are
+  separate features and keep their existing behavior.
 
 - `api:config/agents` — `GET` answers the `sources` envelope; `GET` with
   `resource: "config"` answers `{ source, scope, path, legacy, config }` and

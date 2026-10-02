@@ -997,30 +997,6 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     keywords: ['oauth', 'headers', 'timeout', 'code mode', 'codemode'],
   },
   {
-    id: 'plugins.create',
-    page: 'plugins',
-    titleKey: 'settings.plugins.sidebar.actions.addTitle',
-    keywords: ['add', 'plugin', 'npm', 'path', 'file'],
-  },
-  {
-    id: 'plugins.spec',
-    page: 'plugins',
-    titleKey: 'settings.plugins.page.field.spec',
-    keywords: ['npm', 'package', 'path'],
-  },
-  {
-    id: 'plugins.options',
-    page: 'plugins',
-    titleKey: 'settings.plugins.page.field.options',
-    keywords: ['json', 'configuration'],
-  },
-  {
-    id: 'plugins.content',
-    page: 'plugins',
-    titleKey: 'settings.plugins.page.field.content',
-    keywords: ['file', 'code'],
-  },
-  {
     id: 'snippets.create',
     page: 'snippets',
     titleKey: 'settings.snippets.sidebar.actions.create',
@@ -1265,22 +1241,6 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     titleKey: 'settings.integrations.linear.mapping.defaultProject',
     descriptionKey: 'settings.integrations.linear.mapping.defaultProject.info',
     keywords: ['linear', 'project', 'team', 'map', 'workspace', 'directory'],
-    isAvailable: (ctx) => !ctx.isVSCode,
-  },
-  {
-    id: 'integrations.third-party',
-    page: 'integrations',
-    titleKey: 'settings.integrations.thirdParty.title',
-    descriptionKey: 'settings.integrations.thirdParty.info',
-    keywords: ['plugin', 'provider', 'install', 'update', 'remove', 'subscription'],
-    isAvailable: (ctx) => !ctx.isVSCode,
-  },
-  {
-    id: 'integrations.third-party.opencode-claude',
-    page: 'integrations',
-    titleKey: 'settings.integrations.thirdParty.opencodeClaude.name',
-    descriptionKey: 'settings.integrations.thirdParty.opencodeClaude.description',
-    keywords: ['claude', 'anthropic', 'claude code', 'pro', 'max', 'agent sdk', '@openchamber/opencode-claude'],
     isAvailable: (ctx) => !ctx.isVSCode,
   },
   {

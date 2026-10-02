@@ -100,10 +100,8 @@ export const createBootstrapRuntime = (dependencies) => {
 
     const notificationEmitRoutes = registerNotificationEmitRoutes(app, {
       express,
-      isAgentToolRequestAuthorized: (req) => agentToolRuntime?.authorizeRequest?.(req) === true,
       emitter: pluginNotificationEmitter,
     });
-    notificationEmitRoutes.registerPluginRoute();
 
     registerAuthAndAccessRoutes(app, {
       express,

@@ -14,7 +14,6 @@ export type SettingsPageSlug =
   | 'behavior'
   | 'commands'
   | 'mcp'
-  | 'plugins'
   | 'skills.installed'
   | 'skills.catalog'
   | 'git'
@@ -143,13 +142,6 @@ export const SETTINGS_PAGE_METADATA: readonly SettingsPageMeta[] = [
     keywords: ['mcp', 'model context protocol', 'servers', 'tools', 'remote', 'stdio'],
   },
   {
-    slug: 'plugins',
-    title: 'Plugins',
-    group: 'opencode',
-    kind: 'single',
-    keywords: ['plugin', 'plugins', 'addons', 'npm', 'opencode-wakatime'],
-  },
-  {
     slug: 'skills.installed',
     title: 'Skills',
     group: 'content',
@@ -238,7 +230,7 @@ export const SETTINGS_PAGE_METADATA: readonly SettingsPageMeta[] = [
     isAvailable: (ctx) => !ctx.isVSCode && ISOLATED_SPACES_RELEASED,
   },
   { slug: 'about', title: 'About', group: 'general', kind: 'single', keywords: ['about', 'version', 'updates', 'release', 'changelog'], isAvailable: (ctx) => ctx.isMobile && !ctx.isVSCode },
-  { slug: 'integrations', title: 'Integrations', group: 'general', kind: 'single', keywords: ['integration', 'connect', 'oauth', 'github', 'linear', 'extension', 'claude', 'plugin'], isAvailable: (ctx) => !ctx.isVSCode },
+  { slug: 'integrations', title: 'Integrations', group: 'general', kind: 'single', keywords: ['integration', 'connect', 'oauth', 'github', 'linear', 'extension'], isAvailable: (ctx) => !ctx.isVSCode },
   {
     slug: 'extensions',
     title: 'Extensions',
@@ -325,8 +317,6 @@ export function getSettingsNavIcon(slug: SettingsPageSlug): IconName | null {
       return 'slash-commands-2';
     case 'mcp':
       return null;
-    case 'plugins':
-      return 'plug-2';
 
     case 'skills.installed':
       return 'book-open';

@@ -4,14 +4,13 @@ import { catalogRefreshTasks } from "./catalogRefresh";
 
 describe("catalogRefreshTasks", () => {
   test("a config rebuild re-reads every list a config file can carry", () => {
-    // Agents, commands, skills, MCP servers, plugins and providers all live
-    // in config, and OpenChamber's own plugin injection is one of them. So
-    // does the web search choice.
-    expect(catalogRefreshTasks("config")).toHaveLength(7);
+    // Agents, commands, skills, MCP servers, providers and the web search
+    // choice still have Settings consumers.
+    expect(catalogRefreshTasks("config")).toHaveLength(6);
   });
 
   test("a single-catalog rebuild re-reads only that list", () => {
-    for (const kind of ["agent", "command", "skill", "plugin", "provider", "websearch"] as const) {
+    for (const kind of ["agent", "command", "skill", "provider", "websearch"] as const) {
       expect(catalogRefreshTasks(kind)).toHaveLength(1);
     }
   });
@@ -20,7 +19,8 @@ describe("catalogRefreshTasks", () => {
     expect(catalogRefreshTasks("credential")).toHaveLength(2);
   });
 
-  test("projects belong to the sync stores, not to the settings lists", () => {
+  test("projects and plugins have no Settings catalog consumer", () => {
+    expect(catalogRefreshTasks("plugin")).toEqual([]);
     expect(catalogRefreshTasks("project")).toEqual([]);
   });
 });
