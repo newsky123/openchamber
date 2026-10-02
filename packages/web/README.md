@@ -52,14 +52,6 @@ openchamber update                   # Update to latest version
 When OpenChamber launches the local OpenCode server, it also registers a native
 `openchamber` agent tool for project, session, and scheduled-task orchestration.
 The tool is not injected when connecting to an external OpenCode server.
-
-Managed local OpenCode servers generate their own temporary password. OpenChamber
-receives it through a private startup pipe and keeps it in backend memory. It is
-never passed through command-line arguments or environment variables to the
-server or its shell/MCP children. External-server credentials keep their existing
-configuration. See [managed OpenCode authentication](server/lib/opencode/DOCUMENTATION.md#public-exports-lifecyclejs)
-for the process and threat boundaries.
-
 Behavior settings can optionally inject a managed system-prompt optimizer on
 the next OpenCode restart. It is disabled by default and is not available for
 external OpenCode servers.

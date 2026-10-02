@@ -21,6 +21,7 @@ for (const mode of ['timeout', 'malformed', 'missing_password', 'stderr_credenti
     const descendant = `process.on('SIGTERM', () => {}); require('node:fs').appendFileSync(${JSON.stringify(marker)}, process.pid + '\\n'); process.stdout.write('ready'); setInterval(() => {}, 1000);`;
     const readyMode = ['ready', 'late_abort', 'exit'].includes(mode);
     const privateDiagnostic = 'fixture-private-output-must-not-escape';
+    const appBundleHint = ' Fixture app bundle hint.';
     let output = '';
     if (mode === 'malformed') output = `process.stdout.write('server listening on http://127.0.0.1:45678\\nserver password invalid\\n');`;
     if (mode === 'missing_password') output = `process.stdout.write('server listening on http://127.0.0.1:45678\\n');`;
@@ -40,7 +41,7 @@ for (const mode of ['timeout', 'malformed', 'missing_password', 'stderr_credenti
     const controller = new AbortController();
     const server = spawnManagedOpenCodeProcess(process.execPath, ['-e', script], {
       cwd, env: process.env, port: 45678, timeoutMs: 1500,
-      signal: controller.signal, sourceBinary: process.execPath,
+      signal: controller.signal, sourceBinary: process.execPath, appBundleHint,
     });
     const result = server.ready.then(() => null, (error: Error) => error);
     try {
@@ -79,6 +80,7 @@ for (const mode of ['timeout', 'malformed', 'missing_password', 'stderr_credenti
         await Promise.all([closing, server.close()]);
       } else {
         assert.ok(error);
+        assert.ok(error.message.endsWith(` Binary used: ${process.execPath}.${appBundleHint}`));
         assert.equal(error.message.includes(privateDiagnostic), false);
         assert.equal(server.url, null);
         assert.throws(() => server.getAuthHeaders(), /authentication is not ready/);
@@ -128,7 +130,7 @@ test('managed launches strip both password names, preserve provider env, and rot
     for (let launch = 0; launch < 2; launch++) {
       server = spawnManagedOpenCodeProcess(process.execPath, [fixture], {
         cwd, env: inheritedEnv, port: 45678, timeoutMs: 3000,
-        signal: new AbortController().signal, sourceBinary: process.execPath,
+        signal: new AbortController().signal, sourceBinary: process.execPath, appBundleHint: '',
       });
       assert.equal(server.url, null);
       assert.throws(() => server?.getAuthHeaders(), /authentication is not ready/);
@@ -170,10 +172,10 @@ test('closing an older managed process cannot clear a concurrent process credent
   `;
   const olderAbort = new AbortController();
   const older = spawnManagedOpenCodeProcess(process.execPath, ['-e', script], {
-    cwd, env: process.env, port: 45678, timeoutMs: 3000, signal: olderAbort.signal, sourceBinary: process.execPath,
+    cwd, env: process.env, port: 45678, timeoutMs: 3000, signal: olderAbort.signal, sourceBinary: process.execPath, appBundleHint: '',
   });
   const newer = spawnManagedOpenCodeProcess(process.execPath, ['-e', script], {
-    cwd, env: process.env, port: 45678, timeoutMs: 3000, signal: new AbortController().signal, sourceBinary: process.execPath,
+    cwd, env: process.env, port: 45678, timeoutMs: 3000, signal: new AbortController().signal, sourceBinary: process.execPath, appBundleHint: '',
   });
   try {
     await Promise.all([older.ready, newer.ready]);

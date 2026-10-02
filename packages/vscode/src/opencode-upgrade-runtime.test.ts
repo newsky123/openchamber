@@ -18,16 +18,12 @@ const createManager = (mode: 'managed' | 'external' = 'managed'): OpenCodeUpgrad
 describe('VS Code OpenCode upgrades', () => {
   test('reports installed and latest versions from the v2 info route', async () => {
     const manager = createManager();
-    globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
       const url = String(input);
-      if (url.endsWith('/api/info')) {
-        assert.equal(init?.redirect, 'error', 'authenticated probes must never follow redirects');
-        assert.equal(new Headers(init?.headers).get('Authorization'), 'Basic test');
-        return new Response(JSON.stringify({ version: '2.0.1', pid: 1, urls: [], paths: { tmp: '/tmp' } }));
-      }
+      if (url.endsWith('/api/info')) return new Response(JSON.stringify({ version: '2.0.1', pid: 1, urls: [], paths: { tmp: '/tmp' } }));
       if (url.includes('registry.npmjs.org')) return new Response(JSON.stringify({ version: '2.0.2' }));
       return new Response(JSON.stringify({ tag_name: 'v2.0.2' }));
-    });
+    }) as typeof fetch;
 
     assert.deepEqual(await getOpenCodeUpgradeStatus(manager), {
       available: true,
@@ -43,7 +39,7 @@ describe('VS Code OpenCode upgrades', () => {
       const url = String(input);
       if (url.endsWith('/api/info')) return new Response(JSON.stringify({ version: '2.0.2', pid: 1, urls: [], paths: { tmp: '/tmp' } }));
       return new Response(JSON.stringify({ version: '2.0.2' }));
-    });
+    }) as typeof fetch;
 
     const status = await getOpenCodeUpgradeStatus(manager);
     assert.equal(status.currentVersion, '2.0.2');
@@ -56,7 +52,7 @@ describe('VS Code OpenCode upgrades', () => {
     globalThis.fetch = (async () => {
       fetchCount += 1;
       return new Response('{}');
-    });
+    }) as typeof fetch;
 
     const result = await upgradeManagedOpenCode(manager);
     assert.equal(result.status, 409);

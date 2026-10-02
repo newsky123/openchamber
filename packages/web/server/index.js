@@ -2479,7 +2479,7 @@ async function main(options = {}) {
       // target, instead of relying on the flag check alone.
       return {
         managed,
-        pid: managed && Number.isInteger(hmrState.openCodeProcess?.pid) ? hmrState.openCodeProcess.pid : null,
+        pid: managed && typeof hmrState.openCodeProcess?.pid === 'number' ? hmrState.openCodeProcess.pid : null,
         port: managed ? hmrState.openCodePort : null,
       };
     },

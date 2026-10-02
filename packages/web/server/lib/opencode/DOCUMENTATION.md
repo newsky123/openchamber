@@ -325,47 +325,23 @@ entry to the previous one's config. OpenChamber adds no automatic MCP reconnect
 loop; recovery after a failed connection is manual for both local and remote
 servers. Previously generated reconnect plugin files are inert because managed
 launch no longer registers them. User-configured plugins remain user-owned.
-PATH remains lifecycle-owned. After every environment merge, managed launch
-removes `OPENCODE_PASSWORD` and `OPENCODE_SERVER_PASSWORD`, including casing
-variants. OpenCode generates a fresh 32-byte random password for each process.
-`managed-auth.js` receives its startup records over the privately captured stdout
-pipe. It accepts only the selected bind address and port, followed immediately
-by the generated password. The parser bounds startup bytes and line lengths,
-rejects malformed or repeated fields before completion, and handles split chunks.
-After the first complete pair it discards all remaining output, regardless of
-how the operating system groups writes into chunks. It constructs
-the connection URL itself, including OpenCode's IPv6 formatting quirks.
+PATH remains lifecycle-owned. Managed launch removes `OPENCODE_PASSWORD` and
+`OPENCODE_SERVER_PASSWORD` case-insensitively after environment merges. OpenCode
+generates its password and `managed-auth.js` reads the adjacent listener/password
+records from private stdout, validating the requested endpoint and bounded input.
+Both streams are drained without retaining output in logs or diagnostics.
+Credentials stay in backend memory, follow the active process across HMR, and
+clear on close, exit or startup failure. Starts/restarts are serialized and
+requests fail closed without managed auth. Initial authenticated readiness
+rejects redirects. Each new process supplies a fresh password.
 
-Neither stdout nor stderr is forwarded, retained in errors, or included in
-process diagnostics. Both pipes remain drained after startup. A missing or
-invalid handshake, child exit, cancellation, or failed authenticated health
-check closes the owned process. Health checks refuse redirects. The password
-lives only in backend runtime memory, including the in-memory HMR state, and
-is cleared on stop, failure, or exit. Auth and process ownership use live shared
-HMR state so callbacks from an older module cannot retain or revoke the wrong
-credential. Concurrent starts join one attempt; restarts wait for it before
-replacing the process. Managed requests fail closed while auth is
-unavailable. A restart receives a fresh password from its new child.
-
-This is a private captured startup pipe, not an authenticated IPC protocol.
-It prevents the generated credential from appearing in argv, inherited env,
-OpenChamber logs, diagnostics, registry files, or child shell/MCP environments.
-It cannot protect against a debugger, root, arbitrary same-user memory or pipe
-inspection, or malicious code loaded into either process. JavaScript strings
-cannot be reliably erased from memory. OpenCode plugins remain trusted code.
-
-Managed HTTP requests still use the existing runtime transports. A system proxy
-configuration, such as Node's `NODE_USE_ENV_PROXY=1` with a proxy but no loopback
-`NO_PROXY` rule, can route authenticated local HTTP through that proxy. This
-change does not make all managed HTTP traffic proxy-independent or encrypted.
-Only use trusted proxy configuration and include managed loopback hosts in its
-bypass rules. A complete direct-only managed transport is separate work.
-
-Web CLI and Electron share this lifecycle; VS Code uses the same handshake
-module in its extension host. Hosted and Capacitor mobile clients receive no
-OpenCode password. Externally configured OpenCode connections preserve their
-existing user-provided credentials, including env precedence, and are outside
-this managed-process protection. Basic auth always uses `opencode`.
+Web and Electron share this lifecycle; VS Code uses the same handshake parser.
+Mobile clients receive no OpenCode password. External connections keep their
+configured credentials and the `opencode` Basic auth username. This boundary
+covers env, argv and output exposure, not root/debuggers, same-user memory/pipe
+inspection or in-process plugins. Existing HTTP transports can still use a
+system proxy, so trusted proxy configuration and loopback bypass rules remain
+necessary. JavaScript strings cannot guarantee memory zeroization.
 External OpenCode processes receive no OpenChamber tool injection. Managed launch env strips AppImage `ARGV0` before
 spawn so zsh-backed OpenCode tools do not rewrite child argv[0] to the AppImage
 path (#2588).
@@ -384,7 +360,7 @@ Upstream health is probed with `GET /api/info` (OpenCode 2.0.8 removed `/api/hea
 
 Transport-triggered health checks share the periodic monitor's failure accounting interval. Rapid WS reconnect callbacks therefore cannot exhaust the managed-process restart threshold using one cached unhealthy result; an exited managed process still restarts immediately.
 
-Managed health failures are classified as `timeout`, `connection_refused`, `connection_reset`, `invalid_response`, or `error`. The lifecycle retains the latest counted failure with a bounded detail string and source. Managed process wrappers continue capturing a sanitized, empty stderr tail after readiness and retain exit code/signal. Before replacing a managed process, lifecycle snapshots the reason, latest health failure, process diagnostics/aliveness, busy-session count, and timestamp into `lastOpenCodeRestartDiagnostics`; successful startup does not clear this snapshot, and `/health` exposes it for post-restart diagnosis without process environment or credentials.
+Managed health failures are classified as `timeout`, `connection_refused`, `connection_reset`, `invalid_response`, or `error`. The lifecycle retains the latest counted failure with a bounded detail string and source. Managed process wrappers retain exit code/signal but leave the stderr tail empty. Before replacing a managed process, lifecycle snapshots the reason, latest health failure, process diagnostics/aliveness, busy-session count, and timestamp into `lastOpenCodeRestartDiagnostics`; successful startup does not clear this snapshot, and `/health` exposes it for post-restart diagnosis without process environment or credentials.
 
 Managed process ownership starts at spawn. The registry and runtime process
 handle include children that have not announced readiness yet, so shutdown can

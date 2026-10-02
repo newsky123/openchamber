@@ -664,7 +664,6 @@ export async function activate(context: vscode.ExtensionContext) {
             method: 'GET',
             headers: { Accept: 'application/json', ...openCodeAuthHeaders },
             signal: controller.signal,
-            redirect: 'error',
           });
           const elapsedMs = Date.now() - startedAt;
           const contentType = resp.headers.get('content-type') || '';

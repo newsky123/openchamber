@@ -746,6 +746,9 @@ function spawnManagedOpenCodeServer(
     cwd: workingDirectory,
     env,
     port, timeoutMs, signal, sourceBinary: binary,
+    appBundleHint: isMacOpenCodeAppBundlePath(binary)
+      ? ' The configured binary points at the macOS desktop app bundle; OpenChamber needs the standalone opencode CLI.'
+      : '',
   });
 }
 

@@ -5,7 +5,7 @@ import { registerManagedProcess, unregisterManagedProcess } from './opencodeProc
 export function spawnManagedOpenCodeProcess(
   binary: string,
   args: string[],
-  options: { cwd: string; env: NodeJS.ProcessEnv; port: number; timeoutMs: number; signal: AbortSignal; sourceBinary: string },
+  options: { cwd: string; env: NodeJS.ProcessEnv; port: number; timeoutMs: number; signal: AbortSignal; sourceBinary: string; appBundleHint: string },
 ) {
   options.signal.throwIfAborted();
   // Sanitize at the final spawn boundary, including callers with merged shell env.
@@ -13,16 +13,10 @@ export function spawnManagedOpenCodeProcess(
   const registration = registerManagedProcess({
     pid: owned.child.pid, ownerPid: process.pid, port: options.port, binary: options.sourceBinary, runtime: 'vscode',
   });
-  const startup = new AbortController();
-  let url: string | null = null;
-  let password: string | null = null;
   let closing: Promise<void> | null = null;
-  const clearConnection = () => {
+  const close = () => {
     url = null;
     password = null;
-  };
-  const close = () => {
-    clearConnection();
     startup.abort();
     if (!closing) closing = (async () => {
       await registration;
@@ -31,30 +25,35 @@ export function spawnManagedOpenCodeProcess(
     })();
     return closing;
   };
+  let url: string | null = null;
+  let password: string | null = null;
+  const startup = new AbortController();
   const onAbort = () => { void close().catch(() => {}); };
   options.signal.addEventListener('abort', onAbort, { once: true });
   const onExit = () => {
-    clearConnection();
+    url = null;
+    password = null;
     // Let the handshake reader classify an early process failure before cleanup.
     queueMicrotask(onAbort);
   };
   owned.child.once('exit', onExit);
   owned.child.once('error', onExit);
   const closed = owned.closed.then(async (exit) => {
-    clearConnection();
     options.signal.removeEventListener('abort', onAbort);
     await close();
     return exit;
   });
+  const startupError = (message: string) => new Error(`${message} Binary used: ${options.sourceBinary}.${options.appBundleHint}`);
   const ready = waitForManagedOpenCodeHandshake(owned.child, {
     hostname: '127.0.0.1', port: options.port, timeoutMs: options.timeoutMs, signal: startup.signal,
   }).then((connection) => {
     startup.signal.throwIfAborted();
     url = connection.url;
     password = connection.password;
-  }).catch(async (error) => {
+  }).catch(async (error: Error) => {
+    const failure = startupError(error.message);
     await close();
-    throw error;
+    throw failure;
   });
   if (options.signal.aborted) onAbort();
   return {
