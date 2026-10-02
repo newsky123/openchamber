@@ -22,7 +22,7 @@ There are multiple store categories in this directory.
 ### Catalog refresh
 
 `catalogRefresh.ts` re-reads the lists Settings and the composer show — agents,
-commands, skills, MCP servers, providers — when OpenCode reports that
+commands, skills, MCP servers, plugins, providers — when OpenCode reports that
 it rebuilt a catalog. The sync layer calls it from `reloadCatalog`; see
 `packages/ui/src/sync/DOCUMENTATION.md` for the kind-to-list table. There is no
 pending-restart queue: config mutations take effect as soon as OpenCode has
@@ -33,8 +33,11 @@ new one, and a load never joins a read that began in an older generation. It
 waits for that read and reads again, so a refresh after a delete cannot be
 answered by the read the delete itself started.
 
-Dynamic plugin configuration has no Settings store. Plugin catalog events
-therefore trigger no Settings request.
+Plugin catalogs carry `loadedDirectory` and `loadedRuntimeKey`, the owner of
+the installed list. The editor waits for that directory's catalog before hydrating a draft;
+plugin IDs alone are not unique across projects. Catalog requests and their
+TTL caches are scoped by runtime and directory. A response for a superseded
+owner cannot replace the catalog or finish the current owner's loading state.
 
 ### Feature cache / query stores
 

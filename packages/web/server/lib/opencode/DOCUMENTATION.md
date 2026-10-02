@@ -314,91 +314,45 @@ The runtime maintains active-session count incrementally from idempotent activit
   - `waitForPortRelease(port, timeoutMs, hostname?)`
   - `killProcessOnPort(port)`
 
-Every managed launch passes `--compiled-plugins-only` before the engine starts.
-This requires the OpenChamber OpenCode build. Stock OpenCode rejects the unknown
-flag without starting its server; OpenChamber never retries without it. The
-version preflight remains a separate version check. Runtime readiness also
-requires the private capability record, so a compatible version alone cannot
-make a managed server ready. External OpenCode stays user-owned.
+Web and Electron managed launches require `--compiled-plugins-only` and a
+private version-1 capability record with `compiledPluginsOnly: true` and the
+requested `agentToolsBootstrap` mode. Stock OpenCode fails closed; a version or
+health response is not proof of this policy.
 
 `getManagedOpenCodeBootstrap()` returns `null` or a launch-scoped
-`{ payload, revoke }` handle. The payload is the version-1 `{ version, url,
-token, catalog }` document for the engine's compiled AgentTools. A handle adds
-`--openchamber-bootstrap`; lifecycle encodes at most 64 KiB, writes once to the
-private child stdin pipe, then ends it. No bootstrap values enter configuration,
-argv, environment, registry, diagnostics, or logs. Lifecycle calls the captured
-`revoke` once on failed startup, child error/exit/close, or explicit shutdown.
-The granting runtime scopes revocation to that launch so an old child cannot
-revoke a replacement. Without a handle the engine runs compiled-only with no
-OpenChamber AgentTools.
+`{ payload, revoke }` handle. A handle adds `--openchamber-bootstrap` and sends
+one bounded JSON document through private stdin, then closes the pipe. It contains
+only the callback URL, capability and catalog data. Revocation belongs to that
+child, so its exit cannot revoke a replacement's capability.
 
-PATH remains lifecycle-owned. After every environment merge, managed launch
-removes `OPENCODE_PASSWORD`, `OPENCODE_SERVER_PASSWORD`,
-`OPENCHAMBER_AGENT_TOOL_TOKEN`, and `OPENCHAMBER_AGENT_TOOL_URL`, including casing
-variants. Managed version preflight and final server spawn also remove
-`NODE_OPTIONS`, `NODE_PATH`, `BUN_OPTIONS`, `BUN_BE_BUN`, `LD_PRELOAD`, `LD_AUDIT`,
-and `DYLD_INSERT_LIBRARIES` case-insensitively. The preflight filters merged shell
-and process env; final spawn filters again after managed env additions. This
-also removes harmless options such as memory limits inside `NODE_OPTIONS`.
-The parent process environment, shell import, and external-server paths are
-unchanged. The selected executable and its launcher/wrapper remain trusted;
-this finite filter does not make an arbitrary launch chain safe.
-OpenCode generates a fresh 32-byte random password for each process.
-`managed-auth.js` receives startup records over privately captured stdout. It
-requires `openchamber capabilities` with version 1, `compiledPluginsOnly: true`,
-and `agentToolsBootstrap` matching the requested mode. That record precedes the
-adjacent listener/password records. Only the selected bind address and port are
-accepted. The parser bounds startup bytes and line lengths, rejects malformed
-or repeated records, and handles split chunks. After the first complete
-handshake it discards all remaining output, regardless of how the operating
-system groups writes. It constructs the connection URL itself, including
-OpenCode's IPv6 formatting quirks.
+After merging shell, process and managed environment, the launcher removes
+OpenCode passwords, old AgentTool URL/token variables and loader controls
+`NODE_OPTIONS`, `NODE_PATH`, `BUN_OPTIONS`, `BUN_BE_BUN`, `LD_PRELOAD`, `LD_AUDIT`
+and `DYLD_INSERT_LIBRARIES`, case-insensitively. Version probes use the same
+filter. The parent environment and external-server behavior are unchanged.
 
-Neither stdout nor stderr is forwarded, retained in errors, or included in
-process diagnostics. Both pipes remain drained after startup. A missing or
-invalid handshake, child exit, cancellation, or failed authenticated health
-check closes the owned process. Health checks refuse redirects. The password
-lives only in backend runtime memory, including the in-memory HMR state, and
-is cleared on stop, failure, or exit. Auth and process ownership use live shared
-HMR state so callbacks from an older module cannot retain or revoke the wrong
-credential. A handle receives an immutable, nonsecret
-`managedStartupCapabilities` proof only after its private handshake succeeds.
-HMR may reuse only a handle with that version-1 compiled-only proof. Lifecycle
-clears readiness and managed auth synchronously for an owned legacy or unproven
-handle, then closes it through its ownership handle before replacement. Health
-and version responses cannot supply this proof. Inherited start/restart promises
-are revalidated after they settle. A rejected inherited operation retires the
-current unproven owned handle before returning a fixed error. Failed close
-retains ownership and blocks startup. Settled promise cleanup cannot clear a
-newer operation. Health monitoring and directory warmup also
-refuse an unproven managed handle. A proven HMR handle keeps its credential. Close, exit, error, and shutdown
-revoke its proof synchronously, including before the OS finishes terminating it.
-Concurrent starts join one attempt; restarts wait for it before replacing the process. Managed requests fail closed while auth is
-unavailable. A restart receives a fresh password from its new child.
+OpenCode generates its password and `managed-auth.js` reads bounded capability,
+listener and password records from private stdout. Both streams are drained
+without retaining output in logs or diagnostics. Credentials stay in backend
+memory, follow the active process across HMR, and clear on close, exit or startup
+failure. Initial authenticated readiness rejects redirects.
 
-This is a private captured startup pipe, not an authenticated IPC protocol.
-It prevents the generated credential from appearing in argv, inherited env,
-OpenChamber logs, diagnostics, registry files, or child shell/MCP environments.
-It cannot protect against a debugger, root, arbitrary same-user memory or pipe
-inspection, or malicious code loaded into either process. JavaScript strings
-cannot be reliably erased from memory. The compiled engine and its compiled
-plugins remain trusted code; configured dynamic plugins are disabled for the
-whole managed process lifetime.
+HMR reuses only an owned process with a verified `managedStartupCapabilities`
+stamp. An unproven process loses readiness and auth before its owned handle is
+closed. Inherited start/restart promises are revalidated after they settle;
+rejection retires an unproven child, and a failed close keeps ownership and blocks
+startup. Cleanup clears only the promise it joined. Close, exit, error and
+shutdown revoke the proof and bootstrap capability. Starts/restarts are serialized
+and requests fail closed without managed auth.
 
-Managed HTTP requests still use the existing runtime transports. A system proxy
-configuration, such as Node's `NODE_USE_ENV_PROXY=1` with a proxy but no loopback
-`NO_PROXY` rule, can route authenticated local HTTP through that proxy. This
-change does not make all managed HTTP traffic proxy-independent or encrypted.
-Only use trusted proxy configuration and include managed loopback hosts in its
-bypass rules. A complete direct-only managed transport is separate work.
+Web and Electron share this lifecycle. VS Code keeps its existing authentication.
+Mobile clients receive no OpenCode password. External connections keep their
+configured credentials and the `opencode` Basic auth username. The compiled
+engine remains trusted: this boundary does not cover root/debuggers, same-user
+memory/pipe inspection or replacement binaries. JavaScript strings cannot
+guarantee memory zeroization. Existing HTTP transports can still use a system
+proxy, so trusted proxy configuration and loopback bypass rules remain necessary.
 
-Web CLI and Electron share this lifecycle; VS Code uses the same handshake
-module in its extension host with compiled-only mode and no AgentTool bootstrap.
-Hosted mobile uses its web server's managed lifecycle; Capacitor connects to an
-existing server and does not spawn OpenCode. Neither mobile client receives an
-OpenCode password. Externally configured OpenCode connections preserve their
-existing user-provided credentials, including env precedence, and are outside
-this managed-process protection. Basic auth always uses `opencode`.
 External OpenCode processes receive no OpenChamber tool injection. Managed launch env strips AppImage `ARGV0` before
 spawn so zsh-backed OpenCode tools do not rewrite child argv[0] to the AppImage
 path (#2588).
@@ -417,7 +371,7 @@ Upstream health is probed with `GET /api/info` (OpenCode 2.0.8 removed `/api/hea
 
 Transport-triggered health checks share the periodic monitor's failure accounting interval. Rapid WS reconnect callbacks therefore cannot exhaust the managed-process restart threshold using one cached unhealthy result; an exited managed process still restarts immediately.
 
-Managed health failures are classified as `timeout`, `connection_refused`, `connection_reset`, `invalid_response`, or `error`. The lifecycle retains the latest counted failure with a bounded detail string and source. Managed process wrappers continue capturing a sanitized, empty stderr tail after readiness and retain exit code/signal. Before replacing a managed process, lifecycle snapshots the reason, latest health failure, process diagnostics/aliveness, busy-session count, and timestamp into `lastOpenCodeRestartDiagnostics`; successful startup does not clear this snapshot, and `/health` exposes it for post-restart diagnosis without process environment or credentials.
+Managed health failures are classified as `timeout`, `connection_refused`, `connection_reset`, `invalid_response`, or `error`. The lifecycle retains the latest counted failure with a bounded detail string and source. Managed process wrappers retain exit code/signal but leave the stderr tail empty. Before replacing a managed process, lifecycle snapshots the reason, latest health failure, process diagnostics/aliveness, busy-session count, and timestamp into `lastOpenCodeRestartDiagnostics`; successful startup does not clear this snapshot, and `/health` exposes it for post-restart diagnosis without process environment or credentials.
 
 Managed process ownership starts at spawn. The registry and runtime process
 handle include children that have not announced readiness yet, so shutdown can
@@ -564,8 +518,8 @@ The same holds for the global config directory. Like OpenCode 2, agents,
 commands and skills are looked up in every `.opencode` from the working
 directory up to the worktree root, so a definition in a parent directory of a
 monorepo package counts; a nested id (`team/reviewer`) maps onto the path.
-Existing plugin directories and config entries remain user-owned. OpenChamber
-does not expose plugin file or entry editing.
+Existing plugin directories and config entries remain user-owned. Plugin file
+and entry editing remain available for external OpenCode connections.
 
 The global config directory is what OpenCode 2 uses: `OPENCODE_CONFIG_DIR`
 when set, else `$XDG_CONFIG_HOME/opencode`, else `~/.config/opencode`. Config
@@ -689,15 +643,15 @@ re-exports that module so both runtimes write identical files.
 back with `formatModelSelection(selection)`. Both are exported from
 `config-v2.js`.
 
-### Retired plugin configuration routes
+### Managed plugin configuration boundary
 
 `/api/config/plugins` and every child path return HTTP 501 with
 `{ error: "Dynamic OpenCode plugin configuration is unavailable.", code: "dynamic_plugins_unavailable" }`
-for every method. The explicit handler runs before the OpenCode proxy and does
-not read or mutate user/project plugin files or configuration. It applies to
-managed and external OpenCode connections alike. Shared Settings also removes
-the plugin manager, package updates and third-party plugin installer. This API
-refusal is separate from the managed OpenCode loader policy.
+for every method while using a managed engine. The explicit guard runs before
+plugin handlers and the OpenCode proxy, without reading or mutating user/project
+plugin files or configuration. It reads the mode on each request. Existing UI
+entries and external-engine plugin configuration remain unchanged. This guard
+is separate from the managed OpenCode loader policy.
 
 ### Request and response JSON per route
 

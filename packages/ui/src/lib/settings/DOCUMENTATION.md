@@ -11,14 +11,6 @@
 - `registry-snapshot.ts` — renders the plain-JSON snapshot for the two consumers that cannot import the UI's TypeScript: the OpenChamber server (`packages/web/server/lib/opencode/settings-registry.json`) and the VS Code extension host (`packages/vscode/src/settings-registry.json`). Regenerate with `bun run settings-registry:generate`; `registry.test.ts` fails when a checked-in copy is stale.
 - `metadata.ts`, `search.ts` — Settings page metadata and the search index (unchanged by the registry; see `.agents/skills/settings-ui-patterns`).
 
-## Retired plugin configuration
-
-Settings no longer offers dynamic OpenCode plugin configuration, installation,
-or updates. Navigation restored with the old `plugins` slug resolves to `home`.
-Search excludes that page and the former third-party plugin installer in
-Integrations. MCP settings and OpenChamber SDK Extensions keep their existing
-pages. User and project plugin files and config entries are left untouched.
-
 ## Invariants
 
 - **A key that is not in the registry does not persist.** `parseSettingsDocument` drops unknown keys on the way in; `updateDesktopSettings` sends only registry keys that are not `computed`; the server and the VS Code bridge drop anything the snapshot does not list.

@@ -129,8 +129,8 @@ second time `PROVIDER_REREAD_AFTER_CREDENTIAL_MS` after a credential change.
 | `agent` | `agent` per directory | agents store + config-store agents |
 | `command` | `command` per directory | commands store |
 | `skill` | — | skills store + skills catalog |
-| `plugin` | — | — |
-| `config` | `config` and `provider` per directory (plus `emitSyncConfigChanged`) | agents, commands, skills, MCP config, config-store providers |
+| `plugin` | — | plugins store |
+| `config` | `config` and `provider` per directory (plus `emitSyncConfigChanged`) | agents, commands, skills, MCP config, plugins, config-store providers |
 | `provider` / `model` / `credential` | `provider` per directory | config-store providers (model-metadata cache invalidated; the current list stays until the new one lands; `credential` reads twice) |
 | `project` | global project list | — |
 

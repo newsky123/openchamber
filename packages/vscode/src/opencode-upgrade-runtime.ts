@@ -75,7 +75,7 @@ export const getOpenCodeUpgradeStatus = async (manager?: OpenCodeUpgradeManager)
   try {
     const [healthResponse, latestVersion] = await Promise.all([
       // OpenCode 2.0.8 replaced `/api/health` with `/api/info`.
-      fetch(new URL('/api/info', apiUrl).toString(), { method: 'GET', redirect: 'error', headers: { Accept: 'application/json', ...manager.getOpenCodeAuthHeaders() } }),
+      fetch(new URL('/api/info', apiUrl).toString(), { method: 'GET', headers: { Accept: 'application/json', ...manager.getOpenCodeAuthHeaders() } }),
       fetchLatestVersion(),
     ]);
     const health = await healthResponse.json().catch(() => null) as { version?: unknown; error?: unknown } | null;

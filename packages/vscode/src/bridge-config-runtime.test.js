@@ -11,7 +11,7 @@ mock.module('vscode', () => ({
 }));
 
 // Point the user-level OpenCode config at a scratch directory BEFORE importing:
-// the bridge writes agents and commands there, and a built-in agent
+// the bridge writes agents, commands and plugins there, and a built-in agent
 // such as `build` is materialised as a user-level file. Nothing here may touch
 // the real ~/.config/opencode.
 const scratchConfigRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'openchamber-vscode-bridge-config-'));
@@ -59,7 +59,7 @@ afterEach(() => {
 
 const readJson = (filePath) => JSON.parse(fs.readFileSync(filePath, 'utf8'));
 
-describe('VS Code config bridge parity', () => {
+describe('VS Code config bridge plugin parity', () => {
   test('explicit config reload restarts OpenCode', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'openchamber-vscode-reload-'));
     tempRoots.push(root);
@@ -117,44 +117,178 @@ describe('VS Code config bridge parity', () => {
     expect(agentConfig.agents.build).toEqual({ mode: 'subagent' });
   });
 
-  test('rejects retired plugin operations without touching user or project files', async () => {
+  test('creates, lists, updates, and deletes project plugin entries', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'openchamber-vscode-plugins-'));
     tempRoots.push(root);
-    const project = path.join(root, 'project');
-    const user = path.join(root, 'user');
-    const ctx = createCtx(project);
-    const originals = new Map();
-    for (const directory of [user, path.join(project, '.opencode')]) {
-      fs.mkdirSync(path.join(directory, 'plugins'), { recursive: true });
-      originals.set(path.join(directory, 'opencode.jsonc'), '// Existing user settings\n{"plugin":["legacy"],"plugins":["existing"]}\n');
-      originals.set(path.join(directory, 'plugins', 'existing.ts'), 'export default { id: "existing" };\n');
-    }
-    for (const [file, contents] of originals) fs.writeFileSync(file, contents);
-    process.env.OPENCODE_CONFIG = path.join(user, 'opencode.jsonc');
+    const ctx = createCtx(root);
 
-    for (const scope of ['user', 'project']) {
-      for (const target of ['list', 'registry', 'entry', 'file']) {
-        for (const method of ['GET', 'POST', 'PATCH', 'PUT', 'DELETE']) {
-          const response = await handleConfigBridgeMessage({
-            id: 'retired-plugin-request',
-            type: 'api:config/plugins',
-            payload: {
-              method, target, directory: project, pluginId: 'existing',
-              body: { scope, spec: 'replacement', fileName: 'existing.ts', content: 'replacement' },
-            },
-          }, ctx, deps);
-          expect(response).toEqual({
-            id: 'retired-plugin-request',
-            type: 'api:config/plugins',
-            success: false,
-            error: 'Dynamic OpenCode plugin configuration is unavailable.',
-            data: { code: 'dynamic_plugins_unavailable' },
-          });
-        }
-      }
-    }
-    for (const [file, contents] of originals) expect(fs.readFileSync(file, 'utf8')).toBe(contents);
+    const created = await handleConfigBridgeMessage({
+      id: 'create',
+      type: 'api:config/plugins',
+      payload: {
+        method: 'POST',
+        target: 'entry',
+        directory: root,
+        body: { scope: 'project', spec: 'plugin-a', options: { enabled: true } },
+      },
+    }, ctx, deps);
+
+    expect(created?.success).toBe(true);
+    expect(created?.data).toMatchObject({
+      success: true,
+      message: 'Plugin entry changed.',
+    });
     expect(ctx.restart).not.toHaveBeenCalled();
+
+    const listed = await handleConfigBridgeMessage({
+      id: 'list',
+      type: 'api:config/plugins',
+      payload: { method: 'GET', target: 'list', directory: root },
+    }, ctx, deps);
+    const entries = listed?.data?.entries || [];
+    const entry = entries.find((candidate) => candidate.spec === 'plugin-a');
+    expect(entry?.scope).toBe('project');
+
+    const updated = await handleConfigBridgeMessage({
+      id: 'update',
+      type: 'api:config/plugins',
+      payload: {
+        method: 'PATCH',
+        target: 'entry',
+        directory: root,
+        pluginId: entry?.id,
+        body: { spec: 'plugin-b' },
+      },
+    }, ctx, deps);
+    expect(updated?.success).toBe(true);
+
+    const config = JSON.parse(fs.readFileSync(path.join(root, '.opencode', 'opencode.json'), 'utf8'));
+    expect(config.plugin).toBeUndefined();
+    expect(config.plugins).toEqual([{ package: 'plugin-b', options: { enabled: true } }]);
+
+    const relisted = await handleConfigBridgeMessage({
+      id: 'relist',
+      type: 'api:config/plugins',
+      payload: { method: 'GET', target: 'list', directory: root },
+    }, ctx, deps);
+    const updatedEntry = (relisted?.data?.entries || []).find((candidate) => candidate.spec === 'plugin-b');
+
+    const deleted = await handleConfigBridgeMessage({
+      id: 'delete',
+      type: 'api:config/plugins',
+      payload: { method: 'DELETE', target: 'entry', directory: root, pluginId: updatedEntry?.id },
+    }, ctx, deps);
+    expect(deleted?.success).toBe(true);
+  });
+
+  test('creates and reads project plugin files', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'openchamber-vscode-plugin-files-'));
+    tempRoots.push(root);
+    const ctx = createCtx(root);
+
+    const created = await handleConfigBridgeMessage({
+      id: 'create-file',
+      type: 'api:config/plugins',
+      payload: {
+        method: 'POST',
+        target: 'file',
+        directory: root,
+        body: { scope: 'project', fileName: 'demo-plugin.ts', content: 'export default {}' },
+      },
+    }, ctx, deps);
+    expect(created?.success).toBe(true);
+
+    const listed = await handleConfigBridgeMessage({
+      id: 'list',
+      type: 'api:config/plugins',
+      payload: { method: 'GET', target: 'list', directory: root },
+    }, ctx, deps);
+    const files = listed?.data?.files || [];
+    const file = files.find((candidate) => candidate.fileName === 'demo-plugin.ts');
+    expect(file?.scope).toBe('project');
+
+    const read = await handleConfigBridgeMessage({
+      id: 'read-file',
+      type: 'api:config/plugins',
+      payload: { method: 'GET', target: 'file', directory: root, pluginId: file?.id },
+    }, ctx, deps);
+    expect(read?.data).toEqual({ fileName: 'demo-plugin.ts', scope: 'project', content: 'export default {}' });
+  });
+
+  test('updates and deletes user plugin entries from OPENCODE_CONFIG source', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'openchamber-vscode-custom-config-'));
+    tempRoots.push(root);
+    const configDir = path.join(root, 'custom-config');
+    const configPath = path.join(configDir, 'opencode.json');
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(configPath, JSON.stringify({ plugin: ['custom-plugin'] }, null, 2), 'utf8');
+    process.env.OPENCODE_CONFIG = configPath;
+    const ctx = createCtx(root);
+
+    const listed = await handleConfigBridgeMessage({
+      id: 'list-custom',
+      type: 'api:config/plugins',
+      payload: { method: 'GET', target: 'list', directory: root },
+    }, ctx, deps);
+    const entry = (listed?.data?.entries || []).find((candidate) => candidate.spec === 'custom-plugin');
+    expect(entry?.scope).toBe('user');
+
+    const updated = await handleConfigBridgeMessage({
+      id: 'update-custom',
+      type: 'api:config/plugins',
+      payload: {
+        method: 'PATCH',
+        target: 'entry',
+        directory: root,
+        pluginId: entry?.id,
+        body: { spec: 'custom-plugin-next' },
+      },
+    }, ctx, deps);
+    expect(updated?.success).toBe(true);
+    // Touching one entry migrates the whole v1 `plugin` array into v2 `plugins`.
+    expect(readJson(configPath).plugin).toBeUndefined();
+    expect(readJson(configPath).plugins).toEqual(['custom-plugin-next']);
+
+    const relisted = await handleConfigBridgeMessage({
+      id: 'relist-custom',
+      type: 'api:config/plugins',
+      payload: { method: 'GET', target: 'list', directory: root },
+    }, ctx, deps);
+    const updatedEntry = (relisted?.data?.entries || []).find((candidate) => candidate.spec === 'custom-plugin-next');
+
+    const deleted = await handleConfigBridgeMessage({
+      id: 'delete-custom',
+      type: 'api:config/plugins',
+      payload: { method: 'DELETE', target: 'entry', directory: root, pluginId: updatedEntry?.id },
+    }, ctx, deps);
+    expect(deleted?.success).toBe(true);
+    expect(readJson(configPath).plugin).toBeUndefined();
+    expect(readJson(configPath).plugins).toBeUndefined();
+  });
+
+  test('writes user plugin files next to OPENCODE_CONFIG', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'openchamber-vscode-custom-files-'));
+    tempRoots.push(root);
+    const configDir = path.join(root, 'custom-config');
+    const configPath = path.join(configDir, 'opencode.json');
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(configPath, '{}', 'utf8');
+    process.env.OPENCODE_CONFIG = configPath;
+    const ctx = createCtx(root);
+
+    const created = await handleConfigBridgeMessage({
+      id: 'create-custom-file',
+      type: 'api:config/plugins',
+      payload: {
+        method: 'POST',
+        target: 'file',
+        directory: root,
+        body: { scope: 'user', fileName: 'demo-plugin.ts', content: 'export default {}' },
+      },
+    }, ctx, deps);
+
+    expect(created?.success).toBe(true);
+    expect(fs.readFileSync(path.join(configDir, 'plugins', 'demo-plugin.ts'), 'utf8')).toBe('export default {}');
   });
 
   // OpenCode 2 watches its config sources, so a write is live as soon as it

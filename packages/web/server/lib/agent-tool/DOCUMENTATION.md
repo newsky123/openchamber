@@ -82,7 +82,7 @@ Inputs may be nested under `parameters` or flattened; the adapter normalizes
 them before calling OpenChamber, and explicit nested values win on a conflict.
 
 - Web and Electron managed engines use the compiled adapter and private bootstrap
-- VS Code requires the compiled-only engine but does not supply OpenChamber agent tools
+- VS Code keeps its existing managed engine and authentication behavior; it is outside this change
 - External OpenCode is not launched or reconfigured by OpenChamber and gets no adapter
 - Hosted and Capacitor mobile use the connected server's tools; no tool runs on the client
 

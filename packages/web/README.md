@@ -56,16 +56,9 @@ statically compiled into that build. Their schemas and private callback
 capability arrive through a one-shot private stdin pipe. External OpenCode gets
 no tool bootstrap and remains outside this managed code-loading policy.
 
-Managed local OpenCode servers generate their own temporary password. OpenChamber
-receives it through a private startup pipe and keeps it in backend memory. It is
-never passed through command-line arguments or environment variables to the
-server or its shell/MCP children. External-server credentials keep their existing
-configuration. See [managed OpenCode authentication](server/lib/opencode/DOCUMENTATION.md#public-exports-lifecyclejs)
-for the process and threat boundaries.
-
-Dynamic OpenCode plugin configuration is no longer offered. Existing user and
-project plugin files are preserved. Managed engines do not load them, and
-provider/model driver packages must already be compiled into the engine.
+Managed engines refuse dynamic plugin configuration and preserve existing user
+and project plugin files. Provider/model driver packages must already be compiled
+into the engine. External OpenCode keeps its existing plugin configuration APIs.
 
 ### Tunnel behavior notes
 

@@ -19,24 +19,17 @@ const runtimeCtx = {
 };
 
 describe('settings search', () => {
-  test('never offers dynamic plugin configuration or installation on any runtime', () => {
-    const contexts = [
-      runtimeCtx,
-      { ...runtimeCtx, isWeb: false, isDesktop: true },
-      { ...runtimeCtx, isWeb: false, isVSCode: true },
-      { ...runtimeCtx, isMobile: true },
-      { ...runtimeCtx, isWeb: false, isMobile: true },
-    ];
-    for (const context of contexts) {
-      for (const query of ['plugin', 'plugins', 'npm', 'claude', '@openchamber/opencode-claude']) {
+  test('finds the Claude Code integration by name and package, never in VS Code', () => {
+    for (const query of ['claude', '@openchamber/opencode-claude']) {
+      for (const isVSCode of [false, true]) {
         const results = buildSettingsSearchResults({
           query,
-          runtimeCtx: context,
+          runtimeCtx: { ...runtimeCtx, isVSCode },
           t,
           getPageTitle: (page) => page,
         });
-        expect(results.some((result) => result.id.startsWith('plugins.'))).toBe(false);
-        expect(results.some((result) => result.id.startsWith('integrations.third-party'))).toBe(false);
+
+        expect(results.some((result) => result.id === 'integrations.third-party.opencode-claude')).toBe(!isVSCode);
       }
     }
   });

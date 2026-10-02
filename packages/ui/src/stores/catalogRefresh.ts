@@ -18,6 +18,7 @@ import { invalidateSkillsLoadCache, useSkillsStore } from "@/stores/useSkillsSto
 import { useSkillsCatalogStore } from "@/stores/useSkillsCatalogStore";
 import { useConfigStore } from "@/stores/useConfigStore";
 import { useMcpConfigStore } from "@/stores/useMcpConfigStore";
+import { usePluginsStore } from "@/stores/usePluginsStore";
 import { refreshWebSearchIfLoaded } from "@/stores/useWebSearchStore";
 
 const SOURCE = "catalogRefresh";
@@ -45,6 +46,10 @@ const refreshSkills = async (): Promise<void> => {
 
 const refreshMcp = async (): Promise<void> => {
   await useMcpConfigStore.getState().loadMcpConfigs({ force: true });
+};
+
+const refreshPlugins = async (): Promise<void> => {
+  await usePluginsStore.getState().loadPlugins({ force: true });
 };
 
 // The current list stays on screen until the fresh one lands: emptying it
@@ -85,6 +90,8 @@ export function catalogRefreshTasks(kind: CatalogKind): Array<() => Promise<void
       return [refreshCommands];
     case "skill":
       return [refreshSkills];
+    case "plugin":
+      return [refreshPlugins];
     // `provider.updated` and `model.updated` (2.0.8) are OpenCode's own
     // deduplicated announcements that the provider list, or the model list it
     // materialises, changed. Both are answered by re-reading the provider list,
@@ -96,12 +103,13 @@ export function catalogRefreshTasks(kind: CatalogKind): Array<() => Promise<void
     case "credential":
       return [refreshProvidersAfterCredentialChange, refreshWebSearchIfLoaded];
     // A config file can carry any of them (a provider declared in
-    // opencode.json included), so the whole set is re-read.
+    // opencode.json included), and OpenChamber's own plugin injection lives
+    // in one, so the whole set is re-read.
     case "config":
-      return [refreshAgents, refreshCommands, refreshSkills, refreshMcp, refreshProviders, refreshWebSearchIfLoaded];
-    // Projects belong to sync; dynamic plugin configuration has no Settings store.
+      return [refreshAgents, refreshCommands, refreshSkills, refreshMcp, refreshPlugins, refreshProviders, refreshWebSearchIfLoaded];
+    // Projects are the sync layer's own slice; nothing in Settings reads them
+    // through these stores.
     case "project":
-    case "plugin":
       return [];
     case "websearch":
       return [refreshWebSearchIfLoaded];

@@ -645,7 +645,6 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
     try {
       const response = await fetch(buildOpenCodeUrl(OPENCODE_HEALTH_PATH, ''), {
         method: 'GET',
-        redirect: 'error',
         headers: {
           Accept: 'application/json',
           ...getOpenCodeAuthHeaders(),
@@ -704,7 +703,6 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
       const base = origin ?? `http://127.0.0.1:${port}`;
       const response = await fetch(`${base}${OPENCODE_HEALTH_PATH}`, {
         method: 'GET',
-        redirect: 'error',
         headers: {
           Accept: 'application/json',
           ...getOpenCodeAuthHeaders(),
@@ -1086,7 +1084,6 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
         timeout = setTimeout(() => controller.abort(), HEALTH_CHECK_TIMEOUT_MS);
         const response = await fetch(buildOpenCodeUrl(OPENCODE_HEALTH_PATH, ''), {
           method: 'GET',
-          redirect: 'error',
           headers: { Accept: 'application/json', ...getOpenCodeAuthHeaders() },
           signal: controller.signal,
         });
@@ -1136,7 +1133,6 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
       try {
         const response = await fetch(buildOpenCodeUrl('/api/agent'), {
           method: 'GET',
-          redirect: 'error',
           headers: { Accept: 'application/json', ...getOpenCodeAuthHeaders() },
         });
 
@@ -1344,7 +1340,6 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
         const url = `${buildOpenCodeUrl('/api/session', '')}?directory=${encodeURIComponent(directory)}&limit=1`;
         await fetch(url, {
           method: 'GET',
-          redirect: 'error',
           headers: { Accept: 'application/json', ...getOpenCodeAuthHeaders() },
           signal: controller.signal,
         });

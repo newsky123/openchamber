@@ -85,7 +85,7 @@ This module provides notification message preparation utilities for the web serv
 
 ### Plugin notification route (emit-route.js)
 - `createPluginNotificationEmitter(dependencies)` owns validation, the rate window and delivery; one instance is shared by the HTTP route and the `openchamber_notify` agent tool (`notify.send`).
-- `registerNotificationEmitRoutes(app, dependencies)` returns `registerPluginRoute()` and `registerApiRoute()`. Bootstrap calls the first before API auth and the second after it.
+- `registerNotificationEmitRoutes(app, dependencies)` returns `registerApiRoute()`. Bootstrap calls it after API auth.
 - Callers must pass regular API auth. The agent-tool capability is not accepted on this route; the compiled notify tool delegates directly through the control service.
 - Body `{ title?, body?, tag?, sessionId?, directory?, showWhenFocused? }`, at least one of title/body; title ≤120, body ≤500 chars, 16kb JSON. `kind` is always `plugin` so callers cannot trigger kinds the UI treats specially.
 - One shared rate window: 10 notifications per 10s, then 429 with `Retry-After`.

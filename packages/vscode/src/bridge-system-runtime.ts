@@ -211,7 +211,6 @@ export async function handleSystemBridgeMessage(
         const response = await fetch(new URL('api/info', base).toString(), {
           method: 'GET',
           headers: { Accept: 'application/json', ...ctx?.manager?.getOpenCodeAuthHeaders() },
-          redirect: 'error',
         });
         const health = await response.json().catch(() => null) as { version?: unknown; error?: unknown } | null;
         if (!response.ok) {

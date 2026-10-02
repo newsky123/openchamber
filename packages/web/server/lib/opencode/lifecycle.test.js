@@ -946,7 +946,6 @@ describe('OpenCode lifecycle', () => {
     expect(server.stderrTail).not.toContain('bG93ZXI6Y2FzZQ');
     expect(server.stderrTail).not.toContain('fake-bearer-token-value');
     expect(server.stderrTail).toBe('');
-    expect(server.stderrTail).toBe('');
 
     await runtime.triggerHealthCheck();
 
@@ -954,7 +953,6 @@ describe('OpenCode lifecycle', () => {
     expect(diagnosticsTail).not.toContain('dXNlcjpwYXNz');
     expect(diagnosticsTail).not.toContain('bG93ZXI6Y2FzZQ');
     expect(diagnosticsTail).not.toContain('fake-bearer-token-value');
-    expect(diagnosticsTail).toBe('');
     expect(diagnosticsTail).toBe('');
 
     await runtime.testState.openCodeProcess.close();

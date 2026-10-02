@@ -37,7 +37,7 @@ Sidebar groups (`packages/ui/src/lib/settings/metadata.ts`, order in `SettingsVi
 
 - **OpenChamber** (`general` group): General, Appearance, Chat, Notifications, Sessions, Shortcuts, Voice, Usage, About.
 - **Workspace** (`projects`): Projects, Remote Instances, External Tunnel, Git.
-- **OpenCode** (`opencode`): Providers, Agents, Behavior, Commands, MCP.
+- **OpenCode** (`opencode`): Providers, Agents, Behavior, Commands, MCP, Plugins.
 - **Library** (`content`): Magic Prompts, Snippets, Skills, Skills Catalog.
 
 Placement rules:
@@ -48,7 +48,7 @@ Placement rules:
 
 ## Browse Pages: Card Grid vs List
 
-A page that browses things with a glanceable state (Providers, MCP)
+A page that browses things with a glanceable state (Providers, MCP, Plugins)
 opens on a card grid from `shared/SettingsCards.tsx`: a dashed add card leads
 the grid, each card opens a detail screen with `SettingsBackButton`, and the
 page kind is `single`. The shown item is page-local or cleared on unmount, so

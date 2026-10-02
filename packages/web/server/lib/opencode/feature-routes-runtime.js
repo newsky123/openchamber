@@ -29,12 +29,27 @@ import { registerOpenChamberControlRoutes } from '../openchamber-control/routes.
 import { registerMarkdownImageGrantRoutes } from '../markdown-image-grants/routes.js';
 import { registerSkillRoutes } from './skill-routes.js';
 import { registerPluginRoutes } from './plugin-routes.js';
+import { getNpmInfo, clearCache as clearNpmCache } from './npm-registry.js';
+import { parseNpmSpec, parsePathSpec, isExactSemver } from './plugin-spec.js';
 import { registerOpenCodeRoutes } from './routes.js';
 import { getProviderSources, removeProviderConfig, upsertProviderConfig } from './providers.js';
 import { getAgentSources, getAgentConfig, getAgentPermissions, createAgent, updateAgent, deleteAgent } from './agents.js';
 import { getCommandSources, getCommandConfig, createCommand, updateCommand, deleteCommand } from './commands.js';
 import { listMcpConfigs, getMcpConfig, createMcpConfig, updateMcpConfig, deleteMcpConfig } from './mcp.js';
 import { listSnippets, getSnippet, createSnippet, updateSnippet, deleteSnippet, expandSnippets } from './snippets.js';
+import {
+  listPluginEntries,
+  getPluginEntry,
+  createPluginEntry,
+  updatePluginEntry,
+  deletePluginEntry,
+  listPluginDirFiles,
+  readPluginDirFile,
+  writePluginDirFile,
+  deletePluginDirFile,
+  encodePluginId,
+  decodePluginId,
+} from './plugins.js';
 import { SKILL_DIR, SKILL_SCOPE, readSkillSupportingFile, writeSkillSupportingFile, deleteSkillSupportingFile } from './shared.js';
 import { getSkillSources, discoverSkills, mergeDiscoveredSkills, createSkill, updateSkill, deleteSkill, renameSkill, isManagedSkillPath } from './skills.js';
 import { getCuratedSkillsSources } from '../skills-catalog/curated-sources.js';
@@ -79,6 +94,7 @@ export const createFeatureRoutesRuntime = (dependencies) => {
 
   const registerRoutes = async (app, routeDependencies) => {
     const {
+      isExternalOpenCode,
       messageSearchRuntime,
       crypto,
       fs,
@@ -251,7 +267,27 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       expandSnippets,
     });
 
-    registerPluginRoutes(app);
+    registerPluginRoutes(app, {
+      isExternalOpenCode,
+      resolveOptionalProjectDirectory,
+      refreshOpenCodeAfterConfigChange,
+      clientReloadDelayMs,
+      listPluginEntries,
+      getPluginEntry,
+      createPluginEntry,
+      updatePluginEntry,
+      deletePluginEntry,
+      listPluginDirFiles,
+      readPluginDirFile,
+      writePluginDirFile,
+      deletePluginDirFile,
+      encodePluginId,
+      decodePluginId,
+      getNpmInfo,
+      parseNpmSpec,
+      parsePathSpec,
+      isExactSemver,
+    });
 
     const { getProfiles, getProfile } = await import('../git/index.js');
 
