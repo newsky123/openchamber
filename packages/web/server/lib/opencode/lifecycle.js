@@ -6,6 +6,7 @@ import { registerManagedProcess, unregisterManagedProcess, reapOrphanedProcesses
 import { applyProviderEnvAliases } from './provider-env-aliases.js';
 import { recordStartupPerformance } from './startup-performance.js';
 import { topUpV1Migration } from './v1-migration-topup.js';
+import { stripOpenCodePasswordEnv, waitForManagedOpenCodeHandshake } from './managed-auth.js';
 
 const parsePositiveInt = (value, fallback) => {
   const parsed = Number.parseInt(String(value ?? ''), 10);
@@ -125,7 +126,7 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
     normalizeApiPrefix,
     applyOpencodeBinaryFromSettings,
     ensureOpencodeCliEnv,
-    ensureLocalOpenCodeServerPassword,
+    setManagedOpenCodePassword,
     resolveManagedOpenCodeLaunchSpec,
     setOpenCodePort,
     setDetectedOpenCodeApiPrefix,
@@ -384,17 +385,6 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
     }
   };
 
-  const formatCapturedOutput = ({ stdout, stderr }) => {
-    const parts = [];
-    if (stdout.trim()) {
-      parts.push(`stdout:\n${stdout.trim()}`);
-    }
-    if (stderr.trim()) {
-      parts.push(`stderr:\n${stderr.trim()}`);
-    }
-    return parts.length > 0 ? parts.join('\n\n') : 'No stdout/stderr captured';
-  };
-
   const createManagedOpenCodeServerProcess = async ({ resolvedBinary, hostname, port, timeout, cwd, env: processEnv, shellEnvKeysCount = 0 }) => {
     let binary = (resolvedBinary || process.env.OPENCODE_BINARY || 'opencode').trim() || 'opencode';
     const sourceBinary = binary;
@@ -441,8 +431,6 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
-    let runtimeStderrTail = '';
-    let runtimeStderrAttached = false;
     let observedExitCode = null;
     let observedSignalCode = null;
 
@@ -450,22 +438,18 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
       pid: child.pid || null,
       exitCode: observedExitCode ?? child.exitCode ?? null,
       signalCode: observedSignalCode ?? child.signalCode ?? null,
-      stderrTail: getBoundedTextTail(sanitizeDiagnosticText(runtimeStderrTail), MANAGED_STDERR_TAIL_MAX_BYTES),
+      stderrTail: '',
     });
     const recordManagedProcessExit = (code, signal) => {
       if (code !== null && code !== undefined) observedExitCode = code;
       if (signal !== null && signal !== undefined) observedSignalCode = signal;
       state.lastManagedOpenCodeProcess = getManagedProcessSnapshot();
-    };
-    const attachRuntimeStderrCapture = () => {
-      if (runtimeStderrAttached) return;
-      runtimeStderrAttached = true;
-      child.stderr?.on('data', (chunk) => {
-        runtimeStderrTail = getBoundedTextTail(
-          `${runtimeStderrTail}${chunk.toString()}`,
-          MANAGED_STDERR_TAIL_MAX_BYTES,
-        );
-      });
+      if (state.openCodeProcess === serverProcess) {
+        setManagedOpenCodePassword(null);
+        state.isOpenCodeReady = false;
+        managedProcessEnv = null;
+        syncToHmrState();
+      }
     };
     child.on('exit', recordManagedProcessExit);
     child.on('close', recordManagedProcessExit);
@@ -487,64 +471,19 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
       get signalCode() { return observedSignalCode ?? child.signalCode; },
       get stderrTail() { return getManagedProcessSnapshot().stderrTail; },
       close() {
+        if (state.openCodeProcess === serverProcess) {
+          setManagedOpenCodePassword(null);
+          state.isOpenCodeReady = false;
+          managedProcessEnv = null;
+          syncToHmrState();
+        }
         if (!closePromise) closePromise = registration.then(() => closeManagedOpenCodeChild(child));
         return closePromise;
       },
     };
 
-    const readiness = new Promise((resolve, reject) => {
-      let stdout = '';
-      let stderr = '';
-      let done = false;
-      const finish = (handler, value) => {
-        if (done) return;
-        done = true;
-        clearTimeout(timer);
-        child.stdout?.off('data', onStdout);
-        child.stderr?.off('data', onStderr);
-        child.off('exit', onExit);
-        child.off('error', onError);
-        handler(value);
-      };
-
-      const onStdout = (chunk) => {
-        stdout += chunk.toString();
-        const lines = stdout.split('\n');
-        for (const line of lines) {
-          // OpenCode 2.x prints `server listening on http://host:port` with no
-          // "opencode" prefix.
-          const match = line.match(/server listening on\s+(https?:\/\/\S+)/);
-          if (!match) continue;
-          attachRuntimeStderrCapture();
-          finish(resolve, match[1]);
-          return;
-        }
-      };
-
-      const onStderr = (chunk) => {
-        stderr += chunk.toString();
-      };
-
-      const onExit = (code, signal) => {
-        const reason = signal ? `signal ${signal}` : `code ${code}`;
-        const appBundleHint = process.platform === 'darwin' && /\/OpenCode\.app\/Contents\/MacOS\/(?:OpenCode|opencode-cli)$/i.test(binary)
-          ? ' The configured binary appears to point at the macOS desktop app bundle; OpenChamber needs the standalone opencode CLI.'
-          : '';
-        finish(reject, new Error(`OpenCode process exited before serving with ${reason}. Binary used: ${binary}.${appBundleHint} ${formatCapturedOutput({ stdout, stderr })}`));
-      };
-
-      const onError = (error) => {
-        finish(reject, error);
-      };
-
-      const timer = setTimeout(() => {
-        finish(reject, new Error(`Timeout waiting for OpenCode to start after ${timeout}ms`));
-      }, timeout);
-
-      child.stdout?.on('data', onStdout);
-      child.stderr?.on('data', onStderr);
-      child.on('exit', onExit);
-      child.on('error', onError);
+    const readiness = waitForManagedOpenCodeHandshake(child, {
+      hostname, port, timeoutMs: timeout,
     }).catch(async (error) => {
       await serverProcess.close();
       if (state.openCodeProcess === serverProcess) {
@@ -557,8 +496,14 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
     // Shutdown must be able to close an in-flight startup, not only a ready server.
     state.openCodeProcess = serverProcess;
     syncToHmrState();
-    serverProcess.url = await readiness;
+    const handshake = await readiness;
     await registration;
+    if (state.isShuttingDown || state.openCodeProcess !== serverProcess || hasChildProcessExited(child) || closePromise) {
+      await serverProcess.close();
+      throw new Error('OpenCode stopped before its private startup handshake completed.');
+    }
+    serverProcess.url = handshake.url;
+    setManagedOpenCodePassword(handshake.password);
     return serverProcess;
   };
 
@@ -713,6 +658,7 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
   const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   const startOpenCodeOnce = async (attempt) => {
+    setManagedOpenCodePassword(null);
     const attemptStartedAt = performance.now();
     let phaseStartedAt = attemptStartedAt;
     recordStartupPerformance('opencode.attempt.start', { attempt });
@@ -735,7 +681,6 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
       totalDurationMs: performance.now() - attemptStartedAt,
     });
     phaseStartedAt = performance.now();
-    const openCodePassword = await ensureLocalOpenCodeServerPassword({ rotateManaged: true });
     let envPath = process.env.PATH;
     if (typeof buildManagedOpenCodePath === 'function') {
       envPath = buildManagedOpenCodePath();
@@ -765,17 +710,12 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
       console.warn('[OpenCode] V1 session migration top-up failed:', error instanceof Error ? error.message : error);
     }
 
-    const processEnv = stripAppImageLauncherEnv(stripAppImageArgv0Leak(applyProviderEnvAliases({
+    const processEnv = stripOpenCodePasswordEnv(stripAppImageLauncherEnv(stripAppImageArgv0Leak(applyProviderEnvAliases({
       ...shellEnv,
       ...process.env,
       ...managedOpenCodeEnv,
       PATH: envPath,
-      // OpenCode 2 reads OPENCODE_PASSWORD before the legacy name, so a
-      // user's own OPENCODE_PASSWORD would otherwise win and every request
-      // we send with openCodePassword would get 401.
-      OPENCODE_PASSWORD: openCodePassword,
-      OPENCODE_SERVER_PASSWORD: openCodePassword,
-    })));
+    }))));
     managedProcessEnv = processEnv;
 
     let serverInstance;
@@ -807,7 +747,7 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
 
       const ready = await waitForReady(serverInstance.url, 10000);
       if (state.isShuttingDown) throw new Error('OpenCode startup cancelled during shutdown');
-      if (ready) {
+      if (ready && state.openCodeProcess === serverInstance && !hasChildProcessExited(serverInstance)) {
         setOpenCodePort(port);
         setDetectedOpenCodeApiPrefix(prefix);
 
@@ -828,11 +768,15 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
       throw new Error('Server started but health check failed (timeout)');
     } catch (error) {
       await serverInstance?.close();
-      if (serverInstance && state.openCodeProcess === serverInstance) state.openCodeProcess = null;
       const message = error instanceof Error ? error.message : String(error);
-      state.lastOpenCodeError = message;
-      state.openCodePort = null;
-      syncToHmrState();
+      if (!state.openCodeProcess || state.openCodeProcess === serverInstance) {
+        state.openCodeProcess = null;
+        setManagedOpenCodePassword(null);
+        managedProcessEnv = null;
+        state.lastOpenCodeError = message;
+        state.openCodePort = null;
+        syncToHmrState();
+      }
       recordStartupPerformance('opencode.attempt.error', {
         attempt,
         totalDurationMs: performance.now() - attemptStartedAt,
@@ -843,7 +787,7 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
     }
   };
 
-  const startOpenCode = async () => {
+  const startOpenCodeSeries = async () => {
     managedPreflight = null;
     let lastError = null;
     for (let attempt = 1; attempt <= START_OPEN_CODE_MAX_ATTEMPTS; attempt += 1) {
@@ -871,6 +815,23 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
     throw lastError;
   };
 
+  const startManagedOpenCode = () => {
+    if (state.currentStartPromise) return state.currentStartPromise;
+    state.currentStartPromise = startOpenCodeSeries().finally(() => {
+      state.currentStartPromise = null;
+    });
+    return state.currentStartPromise;
+  };
+
+  const startOpenCode = async () => {
+    if (state.currentRestartPromise) {
+      await state.currentRestartPromise;
+      return state.openCodeProcess;
+    }
+    if (state.isOpenCodeReady && isManagedOpenCodeProcessAlive()) return state.openCodeProcess;
+    return startManagedOpenCode();
+  };
+
   const restartOpenCode = async (reason = 'managed-restart') => {
     if (state.isShuttingDown) return;
     if (state.currentRestartPromise) {
@@ -879,6 +840,10 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
     }
 
     state.currentRestartPromise = (async () => {
+      // A restart owns the next generation. Let an in-flight startup settle
+      // before closing it, so its failure cannot clear replacement credentials.
+      await state.currentStartPromise?.catch(() => {});
+      if (state.isShuttingDown) return;
       managedPreflight = null;
       state.isRestartingOpenCode = true;
       state.isOpenCodeReady = false;
@@ -946,7 +911,7 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
       }
 
       state.lastOpenCodeError = null;
-      state.openCodeProcess = await startOpenCode();
+      state.openCodeProcess = await startManagedOpenCode();
       syncToHmrState();
 
       if (state.expressApp) {
@@ -1130,6 +1095,7 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
         console.warn('[lifecycle] orphan reap failed:', error?.message ?? error);
       }
 
+      if (state.currentStartPromise) await state.currentStartPromise;
       syncFromHmrState();
       if (await isOpenCodeProcessHealthy()) {
         console.log(`[HMR] Reusing existing OpenCode process on port ${state.openCodePort}`);

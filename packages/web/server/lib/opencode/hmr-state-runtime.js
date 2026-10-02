@@ -17,15 +17,22 @@ export const createHmrStateRuntime = (dependencies) => {
     if (!globalThisLike[stateKey]) {
       globalThisLike[stateKey] = {
         openCodeProcess: null,
+        currentStartPromise: null,
+        currentRestartPromise: null,
         openCodePort: null,
+        openCodeBaseUrl: null,
         openCodeWorkingDirectory: getInitialOpenCodeWorkingDirectory(),
         isShuttingDown: false,
+        isOpenCodeReady: false,
+        isRestartingOpenCode: false,
         signalsAttached: false,
         userProvidedOpenCodePassword: undefined,
         openCodeAuthPassword: null,
         openCodeAuthSource: null,
       };
     }
+    globalThisLike[stateKey].isOpenCodeReady ??= false;
+    globalThisLike[stateKey].isRestartingOpenCode ??= false;
     return globalThisLike[stateKey];
   };
 
@@ -50,7 +57,7 @@ export const createHmrStateRuntime = (dependencies) => {
     openCodeAuthPassword:
       typeof hmrState.openCodeAuthPassword === 'string' && hmrState.openCodeAuthPassword.length > 0
         ? hmrState.openCodeAuthPassword
-        : userProvidedOpenCodePassword,
+        : (hmrState.openCodeAuthSource === 'managed' ? null : userProvidedOpenCodePassword),
     openCodeAuthSource:
       typeof hmrState.openCodeAuthSource === 'string' && hmrState.openCodeAuthSource.length > 0
         ? hmrState.openCodeAuthSource

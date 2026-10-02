@@ -34,6 +34,12 @@ describe('OpenCode network runtime', () => {
     await expect(readyPromise).resolves.toBe(false);
   });
 
+  it('refuses redirects on authenticated readiness requests', async () => {
+    globalThis.fetch = vi.fn(async () => ({ ok: true, json: async () => ({ version: '2.0.21' }) }));
+    expect(await createRuntime().waitForReady('http://127.0.0.1:4096')).toBe(true);
+    expect(globalThis.fetch.mock.calls[0][1].redirect).toBe('error');
+  });
+
   it('builds managed OpenCode URLs against IPv4 loopback by default', () => {
     const runtime = createRuntime();
 

@@ -325,12 +325,24 @@ entry to the previous one's config. OpenChamber adds no automatic MCP reconnect
 loop; recovery after a failed connection is manual for both local and remote
 servers. Previously generated reconnect plugin files are inert because managed
 launch no longer registers them. User-configured plugins remain user-owned.
-PATH, `OPENCODE_PASSWORD` and `OPENCODE_SERVER_PASSWORD` remain lifecycle-owned
-and cannot be replaced by injected or inherited values; OpenCode 2 prefers
-`OPENCODE_PASSWORD`, so both carry the managed password. A user-provided
-password is read with the same precedence, and Basic auth always uses the
-`opencode` username because OpenCode 2 accepts no other. External OpenCode processes receive no
-OpenChamber tool injection. Managed launch env strips AppImage `ARGV0` before
+PATH remains lifecycle-owned. Managed launch removes `OPENCODE_PASSWORD` and
+`OPENCODE_SERVER_PASSWORD` case-insensitively after environment merges. OpenCode
+generates its password and `managed-auth.js` reads the adjacent listener/password
+records from private stdout, validating the requested endpoint and bounded input.
+Both streams are drained without retaining output in logs or diagnostics.
+Credentials stay in backend memory, follow the active process across HMR, and
+clear on close, exit or startup failure. Starts/restarts are serialized and
+requests fail closed without managed auth. Initial authenticated readiness
+rejects redirects. Each new process supplies a fresh password.
+
+Web and Electron share this lifecycle. VS Code keeps its existing authentication.
+Mobile clients receive no OpenCode password. External connections keep their
+configured credentials and the `opencode` Basic auth username. This boundary
+covers env, argv and output exposure, not root/debuggers, same-user memory/pipe
+inspection or in-process plugins. Existing HTTP transports can still use a
+system proxy, so trusted proxy configuration and loopback bypass rules remain
+necessary. JavaScript strings cannot guarantee memory zeroization.
+External OpenCode processes receive no OpenChamber tool injection. Managed launch env strips AppImage `ARGV0` before
 spawn so zsh-backed OpenCode tools do not rewrite child argv[0] to the AppImage
 path (#2588).
 
@@ -348,7 +360,7 @@ Upstream health is probed with `GET /api/info` (OpenCode 2.0.8 removed `/api/hea
 
 Transport-triggered health checks share the periodic monitor's failure accounting interval. Rapid WS reconnect callbacks therefore cannot exhaust the managed-process restart threshold using one cached unhealthy result; an exited managed process still restarts immediately.
 
-Managed health failures are classified as `timeout`, `connection_refused`, `connection_reset`, `invalid_response`, or `error`. The lifecycle retains the latest counted failure with a bounded detail string and source. Managed process wrappers continue capturing a sanitized, bounded stderr tail after readiness and retain exit code/signal. Before replacing a managed process, lifecycle snapshots the reason, latest health failure, process diagnostics/aliveness, busy-session count, and timestamp into `lastOpenCodeRestartDiagnostics`; successful startup does not clear this snapshot, and `/health` exposes it for post-restart diagnosis without process environment or credentials.
+Managed health failures are classified as `timeout`, `connection_refused`, `connection_reset`, `invalid_response`, or `error`. The lifecycle retains the latest counted failure with a bounded detail string and source. Managed process wrappers retain exit code/signal but leave the stderr tail empty. Before replacing a managed process, lifecycle snapshots the reason, latest health failure, process diagnostics/aliveness, busy-session count, and timestamp into `lastOpenCodeRestartDiagnostics`; successful startup does not clear this snapshot, and `/health` exposes it for post-restart diagnosis without process environment or credentials.
 
 Managed process ownership starts at spawn. The registry and runtime process
 handle include children that have not announced readiness yet, so shutdown can
@@ -714,7 +726,7 @@ headers }` or v1 `{ npm, options }`. The stored entry is always a
 - Returned API:
   - `getOpenCodeAuthHeaders()`
   - `isOpenCodeConnectionSecure()`
-  - `ensureLocalOpenCodeServerPassword(options?)`
+  - `setManagedOpenCodePassword(password | null)`
 
 ## Public exports (core-routes.js)
 - `registerServerStatusRoutes(app, dependencies)`: registers status/system endpoints:

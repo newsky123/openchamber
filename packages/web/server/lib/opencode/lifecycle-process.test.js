@@ -15,7 +15,7 @@ const createRuntime = (waitForReady, state) => createOpenCodeLifecycleRuntime({
   checkOpenCodeBinary: async () => '2.0.14',
   ensureOpencodeCliEnv: () => process.execPath,
   applyOpencodeBinaryFromSettings: async () => {},
-  ensureLocalOpenCodeServerPassword: async () => 'fixture-only',
+  setManagedOpenCodePassword() {},
   resolveManagedOpenCodeLaunchSpec: (binary) => ({ binary, args: [] }),
   normalizeApiPrefix: (value) => value,
   setOpenCodePort() {}, setDetectedOpenCodeApiPrefix() {},
@@ -31,7 +31,7 @@ describe('managed process lifecycle with real children', () => {
       process.env.OPENCHAMBER_MANAGED_PROCESS_REGISTRY = path.join(root, 'registry');
       const marker = path.join(root, 'pids');
       const childScript = `process.on('SIGTERM', () => {}); require('node:fs').appendFileSync(${JSON.stringify(marker)}, process.pid + '\\n'); process.stdout.write('ready\\n'); setInterval(() => {}, 1000);`;
-      let readinessMessage = 'server listening on http://127.0.0.1:45678\n';
+      let readinessMessage = 'server listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n';
       // A line that looks like the readiness line but carries no URL is noise,
       // not readiness: the start must time out rather than connect to nothing.
       if (failure === 'invalid-readiness') readinessMessage = 'server listening without a URL\n';
@@ -58,7 +58,7 @@ describe('managed process lifecycle with real children', () => {
           await Promise.all([server.close(), server.close()]);
         } else if (failure === 'shutdown-during-startup') {
           const starting = runtime.startOpenCode();
-          const rejected = expect(starting).rejects.toThrow('exited before serving');
+          const rejected = expect(starting).rejects.toThrow(/OpenCode (?:exited|closed).*handshake/);
           await expect.poll(async () => (await fs.readFile(marker, 'utf8').catch(() => '')).trim().split('\n').filter(Boolean).length).toBe(2);
           state.isShuttingDown = true;
           await state.openCodeProcess.close();

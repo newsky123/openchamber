@@ -1,89 +1,24 @@
 export const createOpenCodeAuthStateRuntime = (dependencies) => {
-  const {
-    crypto,
-    process,
-    getAuthPassword,
-    setAuthPassword,
-    getAuthSource,
-    setAuthSource,
-    getUserProvidedPassword,
-    syncToHmrState,
-  } = dependencies;
+  const { state, syncToHmrState } = dependencies;
 
-  const normalizeOpenCodePassword = (value) => {
-    if (typeof value !== 'string') {
-      return '';
-    }
-    return value.trim();
-  };
-
-  const isValidOpenCodePassword = (password) => typeof password === 'string' && password.trim().length > 0;
-
-  const generateSecureOpenCodePassword = () =>
-    crypto
-      .randomBytes(32)
-      .toString('base64')
-      .replace(/\+/g, '-')
-      .replace(/\//g, '_')
-      .replace(/=+$/g, '');
-
-  const setOpenCodeAuthState = (password, source) => {
-    const normalized = normalizeOpenCodePassword(password);
-    if (!isValidOpenCodePassword(normalized)) {
-      setAuthPassword(null);
-      setAuthSource(null);
-      delete process.env.OPENCODE_SERVER_PASSWORD;
-      syncToHmrState();
-      return null;
-    }
-
-    setAuthPassword(normalized);
-    setAuthSource(source);
-    process.env.OPENCODE_SERVER_PASSWORD = normalized;
+  // The managed child owns generation. Keep the returned credential in runtime
+  // memory only, including during HMR. Never publish it through process.env.
+  const setManagedOpenCodePassword = (password) => {
+    state.openCodeAuthPassword = password || null;
+    state.openCodeAuthSource = 'managed';
     syncToHmrState();
-    return normalized;
   };
 
   const getOpenCodeAuthHeaders = () => {
-    const password = normalizeOpenCodePassword(getAuthPassword() || process.env.OPENCODE_SERVER_PASSWORD || '');
-
+    const password = state.openCodeAuthPassword;
     if (!password) {
+      if (state.openCodeAuthSource === 'managed') throw new Error('Managed OpenCode authentication is not ready.');
       return {};
     }
-
-    // OpenCode 2 accepts only this username; OPENCODE_SERVER_USERNAME is ignored.
-    const credentials = Buffer.from(`opencode:${password}`).toString('base64');
-    return { Authorization: `Basic ${credentials}` };
+    return { Authorization: `Basic ${Buffer.from(`opencode:${password}`).toString('base64')}` };
   };
 
-  const isOpenCodeConnectionSecure = () => Object.prototype.hasOwnProperty.call(getOpenCodeAuthHeaders(), 'Authorization');
+  const isOpenCodeConnectionSecure = () => Boolean(state.openCodeAuthPassword);
 
-  const ensureLocalOpenCodeServerPassword = async ({ rotateManaged = false } = {}) => {
-    const userProvidedPassword = getUserProvidedPassword();
-    if (isValidOpenCodePassword(userProvidedPassword)) {
-      return setOpenCodeAuthState(userProvidedPassword, 'user-env');
-    }
-
-    if (rotateManaged) {
-      const rotatedPassword = setOpenCodeAuthState(generateSecureOpenCodePassword(), 'rotated');
-      console.log('Rotated secure password for managed local OpenCode instance');
-      return rotatedPassword;
-    }
-
-    const currentPassword = getAuthPassword();
-    const currentSource = getAuthSource();
-    if (isValidOpenCodePassword(currentPassword)) {
-      return setOpenCodeAuthState(currentPassword, currentSource || 'generated');
-    }
-
-    const generatedPassword = setOpenCodeAuthState(generateSecureOpenCodePassword(), 'generated');
-    console.log('Generated secure password for managed local OpenCode instance');
-    return generatedPassword;
-  };
-
-  return {
-    getOpenCodeAuthHeaders,
-    isOpenCodeConnectionSecure,
-    ensureLocalOpenCodeServerPassword,
-  };
+  return { getOpenCodeAuthHeaders, isOpenCodeConnectionSecure, setManagedOpenCodePassword };
 };
