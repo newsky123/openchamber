@@ -6,7 +6,7 @@ import { registerManagedProcess, unregisterManagedProcess, reapOrphanedProcesses
 import { applyProviderEnvAliases } from './provider-env-aliases.js';
 import { recordStartupPerformance } from './startup-performance.js';
 import { topUpV1Migration } from './v1-migration-topup.js';
-import { stripOpenCodePasswordEnv, waitForManagedOpenCodeHandshake } from './managed-auth.js';
+import { sanitizeManagedOpenCodeEnv, waitForManagedOpenCodeHandshake } from './managed-auth.js';
 
 const parsePositiveInt = (value, fallback) => {
   const parsed = Number.parseInt(String(value ?? ''), 10);
@@ -22,6 +22,11 @@ const HEALTH_CHECK_INTERVAL_OVERRIDE_MS = parsePositiveInt(process.env.OPENCHAMB
 const HEALTH_CHECK_RESULT_CACHE_MS = parsePositiveInt(process.env.OPENCHAMBER_OPENCODE_HEALTH_CACHE_MS, 750);
 const OPENCODE_HEALTH_PATH = '/api/info';
 const OPENCODE_REQUIRED_MAJOR_VERSION = 2;
+const hasManagedPolicyProof = (child) => child?.managedStartupCapabilities?.version === 1
+  && child.managedStartupCapabilities.compiledPluginsOnly === true
+  && [0, 1].includes(child.managedStartupCapabilities.agentToolsBootstrap);
+const MANAGED_POLICY_REQUIRED = 'Managed OpenCode has no verified compiled-only startup capability. Restart with the OpenChamber compiled-only build.';
+
 
 /**
  * OpenChamber talks to OpenCode 2.x only. v1 serves its routes without the
@@ -137,6 +142,7 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
     buildManagedOpenCodePath,
     getManagedOpenCodeShellEnvSnapshot,
     getManagedOpenCodeEnv = async () => ({}),
+    getManagedOpenCodeBootstrap = async () => null,
     getActiveSessionCount = () => 0,
     reapManagedOrphanedProcesses = reapOrphanedProcesses,
     getWarmupDirectories = async () => [],
@@ -152,6 +158,50 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
   // takes from environment variables are never stored in it, so this is the
   // only place their values can be read back (see auth.js).
   let managedProcessEnv = null;
+
+  const invalidateUnverifiedManagedProcess = () => {
+    if (state.isExternalOpenCode || !state.openCodeProcess || hasManagedPolicyProof(state.openCodeProcess)) return false;
+    state.isOpenCodeReady = false;
+    setManagedOpenCodePassword(null);
+    managedProcessEnv = null;
+    syncToHmrState();
+    return true;
+  };
+
+  const retireUnverifiedManagedProcess = async () => {
+    if (!invalidateUnverifiedManagedProcess()) return;
+    const child = state.openCodeProcess;
+    // A remembered port is not ownership. Only the owned handle may stop it.
+    if (!child.close) throw new Error(MANAGED_POLICY_REQUIRED);
+    try {
+      await child.close();
+    } catch {
+      // Preserve ownership so a later explicit retry can stop this same child.
+      throw new Error('The unverified managed OpenCode process could not be stopped. Managed startup remains blocked.');
+    }
+    if (state.openCodeProcess === child) {
+      state.openCodeProcess = null;
+      state.openCodePort = null;
+      syncToHmrState();
+    }
+  };
+
+  const waitForPendingManagedOperation = async (key) => {
+    const pending = state[key];
+    if (!pending) return null;
+    try {
+      return await pending;
+    } catch {
+      // A pre-policy HMR startup can reject while leaving its process alive.
+      // Re-read the current owner: an external or proven replacement is exempt.
+      await retireUnverifiedManagedProcess();
+      throw new Error('An inherited OpenCode startup operation failed. Retry managed startup with the compiled-only build.');
+    } finally {
+      // Older HMR modules may leave a settled promise in shared state. Clear
+      // only the one we joined, never a newer start/restart queued meanwhile.
+      if (state[key] === pending) state[key] = null;
+    }
+  };
 
   const killProcessOnPortWin32 = (port) => {
     try {
@@ -385,10 +435,21 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
     }
   };
 
-  const createManagedOpenCodeServerProcess = async ({ resolvedBinary, hostname, port, timeout, cwd, env: processEnv, shellEnvKeysCount = 0 }) => {
+  const createManagedOpenCodeServerProcess = async ({ resolvedBinary, hostname, port, timeout, cwd, env: processEnv, shellEnvKeysCount = 0, bootstrap, revokeBootstrap }) => {
+    let bootstrapJson = null;
+    if (bootstrap) {
+      try {
+        bootstrapJson = JSON.stringify(bootstrap.payload);
+      } catch {
+        throw new Error('OpenCode private bootstrap could not be encoded.');
+      }
+      if (!bootstrapJson || Buffer.byteLength(bootstrapJson) > 64 * 1024) {
+        throw new Error('OpenCode private bootstrap exceeds its 64 KiB limit or is empty.');
+      }
+    }
     let binary = (resolvedBinary || process.env.OPENCODE_BINARY || 'opencode').trim() || 'opencode';
     const sourceBinary = binary;
-    let args = ['serve', '--hostname', hostname, '--port', String(port)];
+    let args = ['serve', '--compiled-plugins-only', ...(bootstrap ? ['--openchamber-bootstrap'] : []), '--hostname', hostname, '--port', String(port)];
     let launchWrapperType = null;
 
     if (process.platform === 'win32' && state.useWslForOpencode) {
@@ -429,8 +490,9 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
       env: processEnv,
       detached: process.platform !== 'win32',
       windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: [bootstrap ? 'pipe' : 'ignore', 'pipe', 'pipe'],
     });
+    let managedStartupCapabilities = null;
     let observedExitCode = null;
     let observedSignalCode = null;
 
@@ -441,6 +503,8 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
       stderrTail: '',
     });
     const recordManagedProcessExit = (code, signal) => {
+      managedStartupCapabilities = null;
+      revokeBootstrap();
       if (code !== null && code !== undefined) observedExitCode = code;
       if (signal !== null && signal !== undefined) observedSignalCode = signal;
       state.lastManagedOpenCodeProcess = getManagedProcessSnapshot();
@@ -453,6 +517,10 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
     };
     child.on('exit', recordManagedProcessExit);
     child.on('close', recordManagedProcessExit);
+    child.once('error', () => {
+      managedStartupCapabilities = null;
+      revokeBootstrap();
+    });
 
     // Ownership starts at spawn, including processes that never become ready.
     const registration = registerManagedProcess({
@@ -471,6 +539,8 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
       get signalCode() { return observedSignalCode ?? child.signalCode; },
       get stderrTail() { return getManagedProcessSnapshot().stderrTail; },
       close() {
+        managedStartupCapabilities = null;
+        revokeBootstrap();
         if (state.openCodeProcess === serverProcess) {
           setManagedOpenCodePassword(null);
           state.isOpenCodeReady = false;
@@ -482,9 +552,19 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
       },
     };
 
-    const readiness = waitForManagedOpenCodeHandshake(child, {
+    const handshakeReady = waitForManagedOpenCodeHandshake(child, {
       hostname, port, timeoutMs: timeout,
-    }).catch(async (error) => {
+      requireCompiledPluginsOnly: true, agentToolsBootstrap: bootstrap ? 1 : 0,
+    });
+    const bootstrapWritten = bootstrap ? new Promise((resolve, reject) => {
+      // This stream is the only place the bootstrap credential leaves memory.
+      // Always end it: the engine validates the one-shot document after EOF.
+      const failed = () => reject(new Error('OpenCode private bootstrap pipe closed before delivery.'));
+      child.stdin.once('error', failed);
+      child.stdin.end(bootstrapJson, 'utf8', (error) => error ? failed() : resolve());
+    }) : Promise.resolve();
+    bootstrapJson = null;
+    const readiness = Promise.all([handshakeReady, bootstrapWritten]).then(([handshake]) => handshake).catch(async (error) => {
       await serverProcess.close();
       if (state.openCodeProcess === serverProcess) {
         state.openCodeProcess = null;
@@ -502,6 +582,13 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
       await serverProcess.close();
       throw new Error('OpenCode stopped before its private startup handshake completed.');
     }
+    // Survives HMR with the owned handle; version/health alone are not proof.
+    // Only the validated private handshake can grant this immutable stamp.
+    managedStartupCapabilities = Object.freeze({ version: 1, compiledPluginsOnly: true, agentToolsBootstrap: bootstrap ? 1 : 0 });
+    Object.defineProperty(serverProcess, 'managedStartupCapabilities', {
+      get: () => managedStartupCapabilities,
+      enumerable: true,
+    });
     serverProcess.url = handshake.url;
     setManagedOpenCodePassword(handshake.password);
     return serverProcess;
@@ -542,6 +629,9 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
   };
 
   const probeOpenCodeHealthDetailed = async () => {
+    if (invalidateUnverifiedManagedProcess()) {
+      return { healthy: false, failure: { class: 'invalid_response', detail: MANAGED_POLICY_REQUIRED } };
+    }
     if (!state.openCodeProcess || !state.openCodePort) {
       return {
         healthy: false,
@@ -672,7 +762,12 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
 
     await applyOpencodeBinaryFromSettings({ strict: true });
     const resolvedBinary = ensureOpencodeCliEnv();
-    const preflight = checkOpenCodeBinary(resolveManagedOpenCodeLaunchSpec(resolvedBinary));
+    const shellEnv = typeof getManagedOpenCodeShellEnvSnapshot === 'function'
+      ? getManagedOpenCodeShellEnvSnapshot() || {}
+      : {};
+    const preflight = checkOpenCodeBinary(resolveManagedOpenCodeLaunchSpec(resolvedBinary), {
+      env: sanitizeManagedOpenCodeEnv({ ...shellEnv, ...process.env }),
+    });
     managedPreflight = preflight.then(() => true, () => false);
     await preflight;
     recordStartupPerformance('opencode.binary.ready', {
@@ -687,9 +782,6 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
     } else if (typeof buildAugmentedPath === 'function') {
       envPath = buildAugmentedPath();
     }
-    const shellEnv = typeof getManagedOpenCodeShellEnvSnapshot === 'function'
-      ? getManagedOpenCodeShellEnvSnapshot() || {}
-      : {};
     const managedOpenCodeEnv = await getManagedOpenCodeEnv();
     recordStartupPerformance('opencode.environment.ready', {
       attempt,
@@ -710,7 +802,7 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
       console.warn('[OpenCode] V1 session migration top-up failed:', error instanceof Error ? error.message : error);
     }
 
-    const processEnv = stripOpenCodePasswordEnv(stripAppImageLauncherEnv(stripAppImageArgv0Leak(applyProviderEnvAliases({
+    const processEnv = sanitizeManagedOpenCodeEnv(stripAppImageLauncherEnv(stripAppImageArgv0Leak(applyProviderEnvAliases({
       ...shellEnv,
       ...process.env,
       ...managedOpenCodeEnv,
@@ -719,7 +811,16 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
     managedProcessEnv = processEnv;
 
     let serverInstance;
+    let revokeBootstrap = () => {};
     try {
+      if (state.isShuttingDown) throw new Error('OpenCode startup cancelled during shutdown');
+      const bootstrap = await getManagedOpenCodeBootstrap();
+      let liveBootstrap = bootstrap;
+      revokeBootstrap = () => {
+        const handle = liveBootstrap;
+        liveBootstrap = null;
+        handle?.revoke();
+      };
       if (state.isShuttingDown) throw new Error('OpenCode startup cancelled during shutdown');
       serverInstance = await createManagedOpenCodeServerProcess({
         resolvedBinary,
@@ -729,6 +830,7 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
         cwd: state.openCodeWorkingDirectory,
         shellEnvKeysCount: Object.keys(shellEnv).length,
         env: processEnv,
+        bootstrap, revokeBootstrap,
       });
 
       if (!serverInstance || !serverInstance.url) {
@@ -767,6 +869,7 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
 
       throw new Error('Server started but health check failed (timeout)');
     } catch (error) {
+      revokeBootstrap();
       await serverInstance?.close();
       const message = error instanceof Error ? error.message : String(error);
       if (!state.openCodeProcess || state.openCodeProcess === serverInstance) {
@@ -789,6 +892,7 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
 
   const startOpenCodeSeries = async () => {
     managedPreflight = null;
+    await retireUnverifiedManagedProcess();
     let lastError = null;
     for (let attempt = 1; attempt <= START_OPEN_CODE_MAX_ATTEMPTS; attempt += 1) {
       try {
@@ -816,7 +920,12 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
   };
 
   const startManagedOpenCode = () => {
-    if (state.currentStartPromise) return state.currentStartPromise;
+    if (state.currentStartPromise) {
+      return waitForPendingManagedOperation('currentStartPromise').then((server) => (
+        state.openCodeProcess === server && hasManagedPolicyProof(server) && !hasChildProcessExited(server)
+          ? server : startOpenCode()
+      ));
+    }
     state.currentStartPromise = startOpenCodeSeries().finally(() => {
       state.currentStartPromise = null;
     });
@@ -824,25 +933,31 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
   };
 
   const startOpenCode = async () => {
+    invalidateUnverifiedManagedProcess();
     if (state.currentRestartPromise) {
-      await state.currentRestartPromise;
-      return state.openCodeProcess;
+      await waitForPendingManagedOperation('currentRestartPromise');
+      if (state.isOpenCodeReady && hasManagedPolicyProof(state.openCodeProcess) && !hasChildProcessExited(state.openCodeProcess)) return state.openCodeProcess;
     }
-    if (state.isOpenCodeReady && isManagedOpenCodeProcessAlive()) return state.openCodeProcess;
+    if (state.currentStartPromise) {
+      const server = await waitForPendingManagedOperation('currentStartPromise');
+      if (state.isOpenCodeReady && state.openCodeProcess === server && hasManagedPolicyProof(server) && !hasChildProcessExited(server)) return server;
+    }
+    invalidateUnverifiedManagedProcess();
+    if (state.isOpenCodeReady && hasManagedPolicyProof(state.openCodeProcess) && isManagedOpenCodeProcessAlive()) return state.openCodeProcess;
     return startManagedOpenCode();
   };
 
   const restartOpenCode = async (reason = 'managed-restart') => {
     if (state.isShuttingDown) return;
     if (state.currentRestartPromise) {
-      await state.currentRestartPromise;
+      await waitForPendingManagedOperation('currentRestartPromise');
       return;
     }
 
     state.currentRestartPromise = (async () => {
       // A restart owns the next generation. Let an in-flight startup settle
       // before closing it, so its failure cannot clear replacement credentials.
-      await state.currentStartPromise?.catch(() => {});
+      if (state.currentStartPromise) await waitForPendingManagedOperation('currentStartPromise');
       if (state.isShuttingDown) return;
       managedPreflight = null;
       state.isRestartingOpenCode = true;
@@ -951,6 +1066,10 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
   };
 
   const waitForOpenCodeReady = async (timeoutMs = 20000, intervalMs = 400) => {
+    if (!state.isExternalOpenCode && !hasManagedPolicyProof(state.openCodeProcess)) {
+      invalidateUnverifiedManagedProcess();
+      throw new Error(MANAGED_POLICY_REQUIRED);
+    }
     if (!state.openCodePort) {
       throw new Error('OpenCode port is not available');
     }
@@ -1075,12 +1194,18 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
   };
 
   const bootstrapOpenCodeAtStartup = async () => {
+    // Clear restored readiness/auth before the first asynchronous operation.
+    invalidateUnverifiedManagedProcess();
     const bootstrapStartedAt = performance.now();
     let bootstrapError = null;
     let unsupportedExternalVersion = null;
     recordStartupPerformance('opencode.bootstrap.start');
     try {
-      // Before doing anything, reap any OpenCode process WE spawned in a prior
+      if (state.currentStartPromise) await waitForPendingManagedOperation('currentStartPromise');
+      if (state.currentRestartPromise) await waitForPendingManagedOperation('currentRestartPromise');
+      syncFromHmrState();
+      invalidateUnverifiedManagedProcess();
+      // Before starting a new process, reap any OpenCode process WE spawned in a prior
       // run that was orphaned by a crash/hard-exit. Verified + scoped to our own
       // pids, so it never touches a live instance's or the user's own server.
       try {
@@ -1095,8 +1220,9 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
         console.warn('[lifecycle] orphan reap failed:', error?.message ?? error);
       }
 
-      if (state.currentStartPromise) await state.currentStartPromise;
-      syncFromHmrState();
+      if (!state.isExternalOpenCode && state.openCodeProcess && !hasManagedPolicyProof(state.openCodeProcess)) {
+        await startOpenCode();
+      }
       if (await isOpenCodeProcessHealthy()) {
         console.log(`[HMR] Reusing existing OpenCode process on port ${state.openCodePort}`);
       } else if (env.ENV_SKIP_OPENCODE_START && env.ENV_EFFECTIVE_PORT) {
@@ -1202,7 +1328,8 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
     const warmedPort = state.openCodePort;
     for (const directory of directories.slice(0, WARMUP_DIRECTORY_LIMIT)) {
       if (typeof directory !== 'string' || !directory) continue;
-      if (!state.isOpenCodeReady || state.openCodePort !== warmedPort) return;
+      if (!state.isOpenCodeReady || state.openCodePort !== warmedPort
+        || (!state.isExternalOpenCode && !hasManagedPolicyProof(state.openCodeProcess))) return;
       let timeout = null;
       try {
         const controller = new AbortController();
@@ -1301,6 +1428,11 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
     if (healthCheckCyclePromise) return healthCheckCyclePromise;
 
     healthCheckCyclePromise = (async () => {
+      if (!hasChildProcessExited(state.openCodeProcess) && invalidateUnverifiedManagedProcess()) {
+        await retireUnverifiedManagedProcess();
+        await restartOpenCode('unverified-managed-policy');
+        return;
+      }
       const healthResult = await probeOpenCodeHealth();
       if (!healthResult.healthy) {
         if (!isManagedOpenCodeProcessAlive()) {
@@ -1374,6 +1506,10 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
       }
     }, effectiveIntervalMs);
   };
+
+  // Module replacement must not expose a restored, unverified managed engine
+  // while the asynchronous bootstrap has not run yet. External owners are exempt.
+  invalidateUnverifiedManagedProcess();
 
   return {
     /** The managed OpenCode's launch environment; null for an external OpenCode or before the first launch. */

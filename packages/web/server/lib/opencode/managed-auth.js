@@ -7,12 +7,23 @@ const MAX_STARTUP_BYTES = 64 * 1024;
 const MAX_LINE_BYTES = 4096;
 const URL_PREFIX = 'server listening on ';
 const PASSWORD_PREFIX = 'server password ';
+const CAPABILITIES_PREFIX = 'openchamber capabilities ';
+const COMPILED_BUILD_REQUIRED = 'Managed OpenCode requires the OpenChamber compiled-plugins-only build with matching bootstrap support. Configure a compatible CLI executable.';
 
 export const stripOpenCodePasswordEnv = (env) => Object.fromEntries(
-  Object.entries(env).filter(([key]) => !['OPENCODE_PASSWORD', 'OPENCODE_SERVER_PASSWORD'].includes(key.toUpperCase())),
+  Object.entries(env).filter(([key]) => !['OPENCODE_PASSWORD', 'OPENCODE_SERVER_PASSWORD', 'OPENCHAMBER_AGENT_TOOL_TOKEN', 'OPENCHAMBER_AGENT_TOOL_URL'].includes(key.toUpperCase())),
 );
 
-export const waitForManagedOpenCodeHandshake = (child, { hostname, port, timeoutMs, signal }) => {
+// Managed compiled-only launches must not inherit loader hooks or runtime-mode
+// overrides. Keep this separate from shell import and external-server behavior.
+export const sanitizeManagedOpenCodeEnv = (env) => Object.fromEntries(
+  Object.entries(stripOpenCodePasswordEnv(env)).filter(([key]) => ![
+    'NODE_OPTIONS', 'NODE_PATH', 'BUN_OPTIONS', 'BUN_BE_BUN',
+    'LD_PRELOAD', 'LD_AUDIT', 'DYLD_INSERT_LIBRARIES',
+  ].includes(key.toUpperCase())),
+);
+
+export const waitForManagedOpenCodeHandshake = (child, { hostname, port, timeoutMs, signal, requireCompiledPluginsOnly = false, agentToolsBootstrap }) => {
   const host = hostname.replace(/^\[|\]$/g, '');
   const addresses = isIP(host) ? Promise.resolve([{ address: host }]) : lookup(host, { all: true });
   return new Promise((resolve, reject) => {
@@ -20,6 +31,7 @@ export const waitForManagedOpenCodeHandshake = (child, { hostname, port, timeout
     let bytes = 0;
     let announcedUrl = null;
     let password = null;
+    let capabilities = null;
     let settled = false;
     let expectedUrls = null;
     const finish = (error, url) => {
@@ -40,6 +52,7 @@ export const waitForManagedOpenCodeHandshake = (child, { hostname, port, timeout
       else resolve({ url, password });
       password = null;
     };
+    const unsupported = () => finish(new Error(COMPILED_BUILD_REQUIRED));
     const invalid = () => finish(new Error('OpenCode private startup handshake is invalid. No credentials were accepted.'));
     const complete = () => {
       if (!password || !expectedUrls || settled) return;
@@ -63,7 +76,18 @@ export const waitForManagedOpenCodeHandshake = (child, { hostname, port, timeout
         const line = pending.endsWith('\r') ? pending.slice(0, -1) : pending;
         pending = '';
         offset = end + 1;
-        if (line.startsWith(URL_PREFIX)) {
+        if (line.startsWith(CAPABILITIES_PREFIX)) {
+          if (capabilities || announcedUrl) return invalid();
+          try {
+            capabilities = JSON.parse(line.slice(CAPABILITIES_PREFIX.length));
+          } catch {
+            return unsupported();
+          }
+          if (capabilities?.version !== 1 || capabilities.compiledPluginsOnly !== true
+            || ![0, 1].includes(capabilities.agentToolsBootstrap)
+            || (agentToolsBootstrap !== undefined && capabilities.agentToolsBootstrap !== agentToolsBootstrap)) return unsupported();
+        } else if (line.startsWith(URL_PREFIX)) {
+          if ((requireCompiledPluginsOnly || agentToolsBootstrap !== undefined) && !capabilities) return unsupported();
           if (announcedUrl) return invalid();
           announcedUrl = line.slice(URL_PREFIX.length);
           if (expectedUrls && !expectedUrls.has(announcedUrl)) return invalid();
@@ -72,14 +96,15 @@ export const waitForManagedOpenCodeHandshake = (child, { hostname, port, timeout
           password = line.slice(PASSWORD_PREFIX.length);
           complete();
           return;
-        } else if (announcedUrl) {
-          // The CLI emits these two records consecutively after server startup.
+        } else if (announcedUrl || capabilities) {
+          // Capability, listener, and password records must stay adjacent.
           return invalid();
         }
       }
     };
-    const onExit = () => finish(new Error('OpenCode exited before its private startup handshake completed.'));
-    const onEnd = () => finish(new Error('OpenCode closed its private startup pipe before the handshake completed.'));
+    const failureDetail = () => requireCompiledPluginsOnly && !capabilities ? ` ${COMPILED_BUILD_REQUIRED}` : '';
+    const onExit = () => finish(new Error(`OpenCode exited before its private startup handshake completed.${failureDetail()}`));
+    const onEnd = () => finish(new Error(`OpenCode closed its private startup pipe before the handshake completed.${failureDetail()}`));
     const onError = () => finish(new Error('OpenCode process could not start. Check the configured CLI executable.'));
     const onAbort = () => finish(new Error('OpenCode startup cancelled.'));
     const timer = setTimeout(() => finish(new Error(`Timeout waiting for OpenCode private startup handshake after ${timeoutMs}ms.`)), timeoutMs);

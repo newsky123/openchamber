@@ -1,5 +1,6 @@
 import { installOpenCodeV2, supportsOpenCodeV2Install } from './lib/opencode/v2-install.js';
 import { describeOpenCodeCompatibility, readOpenCodeCliVersion, readExternalOpenCodeVersion } from './lib/opencode/compatibility.js';
+import { sanitizeManagedOpenCodeEnv } from './lib/opencode/managed-auth.js';
 import 'reflect-metadata';
 import express from 'express';
 import compression from 'compression';
@@ -1408,6 +1409,7 @@ const openCodeLifecycleRuntime = createOpenCodeLifecycleRuntime({
     }
   },
   getManagedOpenCodeEnv: async () => (managedConfigRuntime ? managedConfigRuntime.buildManagedChildEnv() : {}),
+  getManagedOpenCodeBootstrap: async () => agentToolRuntime?.createBootstrap() ?? null,
 });
 
 // Quota lookups, voice keys and routing read provider credentials from the
@@ -1427,7 +1429,9 @@ const getOpenCodeCompatibility = async () => {
   }
   const binary = ensureOpencodeCliEnv();
   const installation = isBundledOpenCodeCliPath(binary) ? 'bundled' : 'managed';
-  const version = await readOpenCodeCliVersion(resolveManagedOpenCodeLaunchSpec(binary)).catch(() => null);
+  const version = await readOpenCodeCliVersion(resolveManagedOpenCodeLaunchSpec(binary), {
+    env: sanitizeManagedOpenCodeEnv({ ...getLoginShellEnvSnapshot(), ...process.env, PATH: buildManagedOpenCodePath() }),
+  }).catch(() => null);
   return describeOpenCodeCompatibility(version, installation, supportsOpenCodeV2Install());
 };
 
@@ -1778,12 +1782,12 @@ async function main(options = {}) {
     || (typeof process.env.OPENCHAMBER_HOST === 'string' && process.env.OPENCHAMBER_HOST.trim().length > 0
       ? process.env.OPENCHAMBER_HOST.trim()
       : '127.0.0.1');
+  hmrState.agentToolCredential ??= { token: null, authority: null };
   agentToolRuntime = createAgentToolRuntime({
     crypto,
-    fsPromises,
-    path,
-    dataDir: OPENCHAMBER_DATA_DIR,
-    env: process.env,
+    credentialState: hmrState.agentToolCredential,
+    readSettings: () => readSettingsFromDiskMigrated(),
+    isAgentMemoryAvailable: isAgentMemoryFeatureAvailable,
     executeAction: (...args) => openChamberControlService.execute(...args),
     // A v2 tool call carries no directory, only the session it runs in.
     resolveSessionDirectory: (sessionID) => openChamberControlService.resolveSessionDirectory(sessionID),
@@ -1799,7 +1803,6 @@ async function main(options = {}) {
     path,
     dataDir: OPENCHAMBER_DATA_DIR,
     env: process.env,
-    agentToolRuntime,
     readSettings: () => readSettingsFromDiskMigrated(),
     isAgentMemoryAvailable: isAgentMemoryFeatureAvailable,
   });
@@ -2278,6 +2281,7 @@ async function main(options = {}) {
   });
 
   await featureRoutesRuntime.registerRoutes(app, {
+    isExternalOpenCode: () => isExternalOpenCode,
     messageSearchRuntime,
     crypto,
     fs,
@@ -2310,7 +2314,7 @@ async function main(options = {}) {
     getOpenCodeCompatibility,
     installOpenCodeV2: async () => {
       const binary = await installOpenCodeV2({
-        env: { ...getLoginShellEnvSnapshot(), ...process.env, PATH: buildManagedOpenCodePath() },
+        env: sanitizeManagedOpenCodeEnv({ ...getLoginShellEnvSnapshot(), ...process.env, PATH: buildManagedOpenCodePath() }),
       });
       await persistSettings({ opencodeBinary: binary });
       await refreshOpenCodeAfterConfigChange('OpenCode v2 installation');
@@ -2318,7 +2322,7 @@ async function main(options = {}) {
     },
     upgradeOpenCodeCli: () => runOpenCodeCliUpgrade(
       resolveManagedOpenCodeLaunchSpec(lastOpenCodeLaunchDiagnostics?.sourceBinary || resolvedOpencodeBinary),
-      { env: { ...getLoginShellEnvSnapshot(), ...process.env, PATH: buildManagedOpenCodePath() }, cwd: os.homedir() },
+      { env: sanitizeManagedOpenCodeEnv({ ...getLoginShellEnvSnapshot(), ...process.env, PATH: buildManagedOpenCodePath() }), cwd: os.homedir() },
     ),
     formatSettingsResponse,
     readSettingsFromDisk,

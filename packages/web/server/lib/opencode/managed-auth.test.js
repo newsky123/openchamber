@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { describe, expect, it } from 'vitest';
-import { stripOpenCodePasswordEnv, waitForManagedOpenCodeHandshake } from './managed-auth.js';
+import { stripOpenCodePasswordEnv, sanitizeManagedOpenCodeEnv, waitForManagedOpenCodeHandshake } from './managed-auth.js';
 
 const password = 'a'.repeat(43);
 const records = (url = 'http://127.0.0.1:45678') => `server listening on ${url}\nserver password ${password}\n`;
@@ -17,7 +17,7 @@ const fixture = (options = {}) => {
 
 describe('private managed OpenCode handshake', () => {
   it('strips both password variables after env composition without mutating its inputs', () => {
-    const input = { PATH: '/bin', OPENCODE_PASSWORD: 'old', OPENCODE_SERVER_PASSWORD: 'older', OpenCode_Password: 'case', opencode_server_password: 'case2', PROVIDER_KEY: 'provider' };
+    const input = { OPENCHAMBER_AGENT_TOOL_TOKEN: 'old-tool-secret', openchamber_agent_tool_url: 'old-url', PATH: '/bin', OPENCODE_PASSWORD: 'old', OPENCODE_SERVER_PASSWORD: 'older', OpenCode_Password: 'case', opencode_server_password: 'case2', PROVIDER_KEY: 'provider' };
     expect(stripOpenCodePasswordEnv(input)).toEqual({ PATH: '/bin', PROVIDER_KEY: 'provider' });
     expect(input.OPENCODE_PASSWORD).toBe('old');
   });
@@ -107,4 +107,61 @@ describe('private managed OpenCode handshake', () => {
       expect((await ready).url).toBe(`http://${connected}:45678`);
     });
   }
+});
+
+
+describe('compiled-only managed capabilities', () => {
+  const capabilities = (mode = 0) => `openchamber capabilities ${JSON.stringify({ version: 1, compiledPluginsOnly: true, agentToolsBootstrap: mode })}\n`;
+  for (const mode of [0, 1]) {
+    it(`accepts private capability mode ${mode} over every byte split`, async () => {
+      const output = capabilities(mode) + records();
+      for (let split = 0; split <= output.length; split++) {
+        const { child, ready } = fixture({ requireCompiledPluginsOnly: true, agentToolsBootstrap: mode });
+        child.stdout.write(output.slice(0, split));
+        child.stdout.write(output.slice(split));
+        expect(await ready).toEqual({ url: 'http://127.0.0.1:45678', password });
+      }
+    });
+  }
+
+  for (const [name, output] of [
+    ['missing capability', records()],
+    ['bootstrap mismatch', capabilities(1) + records()],
+    ['unsupported version', capabilities().replace('"version":1', '"version":2') + records()],
+    ['disabled policy', capabilities().replace('true', 'false') + records()],
+    ['string boolean', capabilities().replace('true', '"true"') + records()],
+    ['invalid mode', capabilities(2) + records()],
+    ['malformed JSON', 'openchamber capabilities private-output\n' + records()],
+    ['null JSON', 'openchamber capabilities null\n' + records()],
+    ['duplicate capability', capabilities() + capabilities() + records()],
+    ['interleaved record', capabilities() + 'unrelated output\n' + records()],
+    ['capability after listener', `server listening on http://127.0.0.1:45678\n${capabilities()}server password ${password}\n`],
+  ]) {
+    it(`rejects ${name} before accepting any credentials`, async () => {
+      const { child, ready } = fixture({ requireCompiledPluginsOnly: true, agentToolsBootstrap: 0 });
+      const result = ready.catch((error) => error);
+      child.stdout.write(output);
+      const error = await result;
+      expect(error).toBeInstanceOf(Error);
+      expect(error.message).not.toContain(password);
+      expect(error.message).not.toContain('private-output');
+    });
+  }
+});
+
+
+describe('compiled-only launch environment', () => {
+  it('strips only the approved loader controls without modifying input or shell-import behavior', () => {
+    const input = {
+      NODE_OPTIONS: '--max-old-space-size=4096', node_path: '/fixture/modules',
+      BUN_OPTIONS: '--preload=/fixture.js', Bun_Be_Bun: '1',
+      LD_PRELOAD: '/fixture.so', ld_audit: '/audit.so', Dyld_Insert_Libraries: '/fixture.dylib',
+      OPENCODE_PASSWORD: 'server-secret', OPENCHAMBER_AGENT_TOOL_TOKEN: 'tool-secret',
+      PATH: '/bin', PROVIDER_KEY: 'provider', NORMAL_SETTING: 'keep',
+    };
+    expect(sanitizeManagedOpenCodeEnv(input)).toEqual({ PATH: '/bin', PROVIDER_KEY: 'provider', NORMAL_SETTING: 'keep' });
+    expect(input.NODE_OPTIONS).toBe('--max-old-space-size=4096');
+    expect(stripOpenCodePasswordEnv(input).NODE_OPTIONS).toBe('--max-old-space-size=4096');
+    expect(input.OPENCODE_PASSWORD).toBe('server-secret');
+  });
 });

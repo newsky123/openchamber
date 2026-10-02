@@ -35,27 +35,22 @@ This module provides OpenCode server integration utilities for the web server ru
 - `packages/web/server/lib/opencode/tunnel-wiring-runtime.js`: tunnel service/routes composition runtime and active-port wiring for main server startup.
 - `packages/web/server/lib/opencode/startup-pipeline-runtime.js`: server startup tail orchestration runtime for terminal/proxy/static/start-listen flow.
 - `packages/web/server/lib/opencode/startup-performance.js`: opt-in startup phase diagnostics with fixed labels and numeric metadata allowlists.
-- `packages/web/server/lib/agent-tool/runtime.js`: managed OpenCode custom-tool materialization, environment injection, same-machine authentication (loopback, or the bound address for a concrete bind), and fixed CLI action dispatch.
-- `packages/web/server/lib/opencode/managed-plugin-config.js`: the `OPENCODE_CONFIG_CONTENT` merge used only on the fallback path, when the user's own environment owns `OPENCODE_CONFIG`.
-- `packages/web/server/lib/opencode/managed-config-file.js`: the managed OpenCode config layer — materializes the enabled OpenChamber plugins (agent tools, system prompt optimizer) and publishes them in a file OpenCode watches.
+- `packages/web/server/lib/agent-tool/runtime.js`: private startup bootstrap, generation-scoped callback authentication, tool settings enforcement, caller-session validation and fixed action dispatch. `catalog.js` supplies data for the statically compiled OpenCode adapter.
+- `packages/web/server/lib/opencode/managed-config-file.js`: publishes data-only `openchamber.agentTools` flags in the watched managed config. It never names plugins or stores credentials.
 
-### Managed plugins on OpenCode 2.x
-A configured plugin must be a DIRECTORY holding a `package.json` that resolves an
-entrypoint; a path to a `.js` file is skipped with "configured plugin path must
-be a directory". The config key is `plugins` (an array of absolute directory
-paths), not `plugin`.
+### Compiled-only managed engines
 
-The generated entrypoint has no imports. OpenCode loads it with a plain dynamic
-`import()`, and resolution happens from the plugin's own directory, where nothing
-is installed — `import { Plugin } from "@opencode/plugin"` fails there. None of
-it is needed: a plugin only has to default-export `{ id, setup }`, and a tool's
-`input` accepts plain JSON Schema.
+Managed launches require the matching OpenCode build's `--compiled-plugins-only`
+flag and startup capability acknowledgement. Its fixed internal registry is
+available, but user, project, config and remote-document plugin sources never
+load. Provider/model driver packages must already be compiled into that build.
+Custom API-compatible endpoint URLs remain configuration data.
 
-Two v1 affordances are gone and the generated tools work around them: a tool
-result has no `title` (it travels in `metadata`) and must not carry `output`
-unless an output schema is declared; and a tool call no longer receives
-`context.directory` or `context.abort`, so the callback sends `context.sessionID`
-and OpenChamber resolves the directory itself.
+OpenChamber's four original tool names are registered by a statically imported
+adapter. Its catalog and callback capability arrive through private stdin, not a
+plugin directory or environment. See `../agent-tool/DOCUMENTATION.md` for the
+callback, permission, cancellation and runtime contracts.
+
 - `packages/web/server/lib/opencode/server-utils-runtime.js`: shared server runtime utilities for OpenCode proxy wiring, OpenCode port/readiness helpers, and snapshot fetchers.
 - `packages/web/server/lib/opencode/openchamber-routes.js`: OpenChamber update and models metadata route registration.
 - `packages/web/server/lib/opencode/pwa-manifest-routes.js`: PWA manifest route registration with recent-session shortcut resolution and short-lived caching.
@@ -319,29 +314,45 @@ The runtime maintains active-session count incrementally from idempotent activit
   - `waitForPortRelease(port, timeoutMs, hostname?)`
   - `killProcessOnPort(port)`
 
-Managed OpenCode launch also merges the environment returned by the agent-tool
-runtime and the opt-in system prompt optimizer, each appending its `file://`
-entry to the previous one's config. OpenChamber adds no automatic MCP reconnect
-loop; recovery after a failed connection is manual for both local and remote
-servers. Previously generated reconnect plugin files are inert because managed
-launch no longer registers them. User-configured plugins remain user-owned.
-PATH remains lifecycle-owned. Managed launch removes `OPENCODE_PASSWORD` and
-`OPENCODE_SERVER_PASSWORD` case-insensitively after environment merges. OpenCode
-generates its password and `managed-auth.js` reads the adjacent listener/password
-records from private stdout, validating the requested endpoint and bounded input.
-Both streams are drained without retaining output in logs or diagnostics.
-Credentials stay in backend memory, follow the active process across HMR, and
-clear on close, exit or startup failure. Starts/restarts are serialized and
-requests fail closed without managed auth. Initial authenticated readiness
-rejects redirects. Each new process supplies a fresh password.
+Web and Electron managed launches require `--compiled-plugins-only` and a
+private version-1 capability record with `compiledPluginsOnly: true` and the
+requested `agentToolsBootstrap` mode. Stock OpenCode fails closed; a version or
+health response is not proof of this policy.
+
+`getManagedOpenCodeBootstrap()` returns `null` or a launch-scoped
+`{ payload, revoke }` handle. A handle adds `--openchamber-bootstrap` and sends
+one bounded JSON document through private stdin, then closes the pipe. It contains
+only the callback URL, capability and catalog data. Revocation belongs to that
+child, so its exit cannot revoke a replacement's capability.
+
+After merging shell, process and managed environment, the launcher removes
+OpenCode passwords, old AgentTool URL/token variables and loader controls
+`NODE_OPTIONS`, `NODE_PATH`, `BUN_OPTIONS`, `BUN_BE_BUN`, `LD_PRELOAD`, `LD_AUDIT`
+and `DYLD_INSERT_LIBRARIES`, case-insensitively. Version probes use the same
+filter. The parent environment and external-server behavior are unchanged.
+
+OpenCode generates its password and `managed-auth.js` reads bounded capability,
+listener and password records from private stdout. Both streams are drained
+without retaining output in logs or diagnostics. Credentials stay in backend
+memory, follow the active process across HMR, and clear on close, exit or startup
+failure. Initial authenticated readiness rejects redirects.
+
+HMR reuses only an owned process with a verified `managedStartupCapabilities`
+stamp. An unproven process loses readiness and auth before its owned handle is
+closed. Inherited start/restart promises are revalidated after they settle;
+rejection retires an unproven child, and a failed close keeps ownership and blocks
+startup. Cleanup clears only the promise it joined. Close, exit, error and
+shutdown revoke the proof and bootstrap capability. Starts/restarts are serialized
+and requests fail closed without managed auth.
 
 Web and Electron share this lifecycle. VS Code keeps its existing authentication.
 Mobile clients receive no OpenCode password. External connections keep their
-configured credentials and the `opencode` Basic auth username. This boundary
-covers env, argv and output exposure, not root/debuggers, same-user memory/pipe
-inspection or in-process plugins. Existing HTTP transports can still use a
-system proxy, so trusted proxy configuration and loopback bypass rules remain
-necessary. JavaScript strings cannot guarantee memory zeroization.
+configured credentials and the `opencode` Basic auth username. The compiled
+engine remains trusted: this boundary does not cover root/debuggers, same-user
+memory/pipe inspection or replacement binaries. JavaScript strings cannot
+guarantee memory zeroization. Existing HTTP transports can still use a system
+proxy, so trusted proxy configuration and loopback bypass rules remain necessary.
+
 External OpenCode processes receive no OpenChamber tool injection. Managed launch env strips AppImage `ARGV0` before
 spawn so zsh-backed OpenCode tools do not rewrite child argv[0] to the AppImage
 path (#2588).
@@ -502,15 +513,13 @@ and WRITES only the v2 one:
 | Agents | `.opencode/{agent,agents,mode,modes}/**/*.md` | `.opencode/agents/<name>.md` |
 | Commands | `.opencode/{command,commands}/**/*.md` | `.opencode/commands/<name>.md` |
 | Skills | `.opencode/{skill,skills}/<id>/SKILL.md`, plus `.claude/skills` and `.agents/skills` | `.opencode/skills/<id>/SKILL.md` |
-| Plugin files | `.opencode/{plugin,plugins}/` — `.ts`/`.js` files and plugin package directories | `.opencode/plugins/<file>` |
 
 The same holds for the global config directory. Like OpenCode 2, agents,
 commands and skills are looked up in every `.opencode` from the working
 directory up to the worktree root, so a definition in a parent directory of a
 monorepo package counts; a nested id (`team/reviewer`) maps onto the path.
-Only files in the v2 `plugins/` directory are editable through the plugins
-page; a package directory or a v1 `plugin/` file is listed as a package that
-OpenCode loads and OpenChamber does not touch.
+Existing plugin directories and config entries remain user-owned. Plugin file
+and entry editing remain available for external OpenCode connections.
 
 The global config directory is what OpenCode 2 uses: `OPENCODE_CONFIG_DIR`
 when set, else `$XDG_CONFIG_HOME/opencode`, else `~/.config/opencode`. Config
@@ -633,6 +642,16 @@ re-exports that module so both runtimes write identical files.
 `parseModelSelection(model)` → `{ providerID, modelID, variant? }` and join it
 back with `formatModelSelection(selection)`. Both are exported from
 `config-v2.js`.
+
+### Managed plugin configuration boundary
+
+`/api/config/plugins` and every child path return HTTP 501 with
+`{ error: "Dynamic OpenCode plugin configuration is unavailable.", code: "dynamic_plugins_unavailable" }`
+for every method while using a managed engine. The explicit guard runs before
+plugin handlers and the OpenCode proxy, without reading or mutating user/project
+plugin files or configuration. It reads the mode on each request. Existing UI
+entries and external-engine plugin configuration remain unchanged. This guard
+is separate from the managed OpenCode loader policy.
 
 ### Request and response JSON per route
 
@@ -941,32 +960,22 @@ file on disk no longer matches, the write is refused with `409` and code
 
 ## Managed OpenCode config layer (managed-config-file.js)
 
-OpenChamber injects its own OpenCode plugins through a file it owns rather than
-through the process environment, because an environment variable cannot change
-under a running child.
+The managed child gets `OPENCODE_CONFIG=<data-dir>/opencode.managed.json` when
+OpenChamber owns that config slot. The file contains only
+`openchamber.agentTools` with `control`, `web`, `memory`, `notify` and `codeMode`
+booleans. Atomic temp-file replacement preserves the previous valid snapshot on
+write failure. The compiled adapter follows OpenCode's normal config watcher.
 
-- Contract: the managed child gets `OPENCODE_CONFIG=<data-dir>/opencode.managed.json`.
-  The file contains only `plugins`: `-opencode.browser` first, then the absolute
-  directory of every OpenChamber plugin currently switched on. OpenCode's
-  built-in browser tools need OpenCode's own desktop app to attach a browser;
-  OpenChamber does not, so they would always fail with `browser.disconnected`
-  and steer agents away from `openchamber_web`. A project config listing
-  `opencode.browser` re-enables it. The fallback path merges the same entry. Its layer sits above the user's
-  global `opencode.json` and below their project config.
-- `OPENCODE_CONFIG_CONTENT` is passed through untouched, so whatever the user
-  put there still applies.
-- `OPENCHAMBER_AGENT_TOOL_URL` and a fresh `OPENCHAMBER_AGENT_TOOL_TOKEN` are
-  always in the child environment, including while every managed tool is off —
-  a tool switched on later then reaches a process that can already call back.
-- `persistSettings` rewrites the file (temp + rename) whenever
-  `agentControlToolEnabled`, `agentWebToolEnabled`, `agentMemoryToolEnabled`,
-  `agentNotifyToolEnabled` or `agentToolsCodeMode` changes. Plugin directories are written before the
-  file names them, and a disabled plugin is removed from the list. OpenCode
-  reloads within a couple of seconds; no restart is involved.
-- Fallback: when the user's own environment already sets `OPENCODE_CONFIG`,
-  OpenChamber does not take it over. It merges its plugin directories into
-  `OPENCODE_CONFIG_CONTENT` instead, and those installs keep the old behavior —
-  a managed-tool toggle needs an OpenCode restart to take effect.
+No plugin directories are materialized or listed. The tool capability travels
+only through the private bootstrap pipe. The old environment variables are
+stripped at the final spawn boundary, including stale shell values.
+
+When the user's environment already owns `OPENCODE_CONFIG`, that file remains
+untouched. OpenChamber merges only its data flags into the child's
+`OPENCODE_CONFIG_CONTENT`; catalog changes then require a restart as before.
+Malformed content blocks startup rather than being replaced with an empty config.
+Existing user plugin entries and files are preserved and ignored by compiled-only
+OpenCode. This data layer is not what enforces the code-loading policy.
 
 The embedded server controller exposes `getManagedOpenCodePreflight()` for
 desktop bootstrap. It shares the lifecycle's current CLI validation promise,

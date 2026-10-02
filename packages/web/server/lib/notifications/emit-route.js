@@ -83,13 +83,9 @@ export const createPluginNotificationEmitter = (dependencies) => {
   return { emit };
 };
 
-/**
- * `POST /api/notifications/emit`. Two callers are accepted: a plugin inside
- * the managed OpenCode (the agent-tool bearer token, checked before API auth)
- * and any client that passes the regular API auth.
- */
+/** `POST /api/notifications/emit` uses ordinary OpenChamber API authentication. */
 export const registerNotificationEmitRoutes = (app, dependencies) => {
-  const { express, isAgentToolRequestAuthorized, emitter } = dependencies;
+  const { express, emitter } = dependencies;
 
   const jsonBody = express.json({ limit: '16kb' });
 
@@ -104,12 +100,6 @@ export const registerNotificationEmitRoutes = (app, dependencies) => {
   };
 
   return {
-    // Registered before API auth: a managed plugin carries no UI session.
-    registerPluginRoute: () => {
-      app.post(NOTIFICATION_EMIT_PATH, jsonBody, (req, res, next) => (
-        isAgentToolRequestAuthorized(req) ? respond(req, res, next) : next()
-      ));
-    },
     // Registered after API auth: everything else is an ordinary API caller.
     registerApiRoute: () => {
       app.post(NOTIFICATION_EMIT_PATH, jsonBody, respond);

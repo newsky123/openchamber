@@ -12,6 +12,7 @@ const BAD_REQUEST_CODES = new Set(['INVALID_FILENAME', 'INVALID_SCOPE', 'INVALID
 
 export const registerPluginRoutes = (app, dependencies) => {
   const {
+    isExternalOpenCode = () => false,
     resolveOptionalProjectDirectory,
     listPluginEntries,
     getPluginEntry,
@@ -30,6 +31,15 @@ export const registerPluginRoutes = (app, dependencies) => {
     isExactSemver = defaultIsExactSemver,
     isPathSpec = defaultIsPathSpec,
   } = dependencies;
+
+  // Keep existing configuration for external engines; managed engines cannot
+  // load plugins. Read the mode per request so runtime switches stay closed.
+  app.use('/api/config/plugins', (_req, res, next) => isExternalOpenCode() === true
+    ? next()
+    : res.status(501).json({
+      error: 'Dynamic OpenCode plugin configuration is unavailable.',
+      code: 'dynamic_plugins_unavailable',
+    }));
 
   const parsedKindForSpec = (spec) => (isPathSpec(spec) ? 'path' : 'npm');
 

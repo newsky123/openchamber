@@ -25,6 +25,7 @@ function createApp(overrides = {}) {
   const testApp = express();
   testApp.use(express.json());
   registerPluginRoutes(testApp, {
+    isExternalOpenCode: () => true,
     resolveOptionalProjectDirectory: async () => ({ directory: projectDir, error: null }),
     refreshOpenCodeAfterConfigChange,
     clientReloadDelayMs: 25,
@@ -401,5 +402,85 @@ describe('opencode plugin routes', () => {
       .expect(400);
 
     expect(response.body.error).toContain('Plugin file name');
+  });
+});
+
+const unavailable = {
+  error: 'Dynamic OpenCode plugin configuration is unavailable.',
+  code: 'dynamic_plugins_unavailable',
+};
+const requests = [
+  ['get', '/api/config/plugins'],
+  ['get', '/api/config/plugins/registry?specs=example-plugin&refresh=true'],
+  ['get', '/api/config/plugins/entry/existing'],
+  ['post', '/api/config/plugins/entry'],
+  ['patch', '/api/config/plugins/entry/existing'],
+  ['delete', '/api/config/plugins/entry/existing'],
+  ['get', '/api/config/plugins/file/existing'],
+  ['post', '/api/config/plugins/file'],
+  ['put', '/api/config/plugins/file/existing'],
+  ['delete', '/api/config/plugins/file/existing'],
+  ['post', '/api/config/plugins/future-operation'],
+];
+
+describe('managed OpenCode plugin configuration boundary', () => {
+  let app;
+  let root;
+  let originals;
+
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'openchamber-plugin-routes-'));
+    originals = new Map();
+    for (const directory of [path.join(root, 'user'), path.join(root, 'project', '.opencode')]) {
+      fs.mkdirSync(path.join(directory, 'plugins'), { recursive: true });
+      originals.set(path.join(directory, 'opencode.jsonc'), '// Keep user config as written\n{"plugin":["legacy"],"plugins":["existing"],"agents":{}}\n');
+      originals.set(path.join(directory, 'plugins', 'existing.ts'), 'export default { id: "existing" };\n');
+    }
+    for (const [file, contents] of originals) fs.writeFileSync(file, contents);
+
+    app = express();
+    app.use(express.json());
+    registerPluginRoutes(app, {});
+    app.use((_req, res) => res.status(418).json({ error: 'proxy fallthrough' }));
+  });
+
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  test.each(requests)('%s %s is unavailable and preserves existing files', async (method, route) => {
+    const response = await request(app)[method](route)
+      .query({ directory: path.join(root, 'project') })
+      .send({ scope: 'project', spec: 'replacement', fileName: 'existing.ts', content: 'replacement' })
+      .expect(501);
+
+    expect(response.body).toEqual(unavailable);
+    for (const [file, contents] of originals) expect(fs.readFileSync(file, 'utf8')).toBe(contents);
+    expect(fs.readdirSync(path.join(root, 'project', '.opencode', 'plugins'))).toEqual(['existing.ts']);
+  });
+
+  test('reads external mode on every request and never invokes managed handlers', async () => {
+    let external = false;
+    const resolveDirectory = mock(async () => ({ directory: null }));
+    const modeApp = express();
+    registerPluginRoutes(modeApp, {
+      isExternalOpenCode: () => external,
+      resolveOptionalProjectDirectory: resolveDirectory,
+      listPluginEntries: () => [],
+      listPluginDirFiles: () => [],
+    });
+    await request(modeApp).get('/api/config/plugins').expect(501);
+    expect(resolveDirectory).toHaveBeenCalledTimes(0);
+    external = true;
+    await request(modeApp).get('/api/config/plugins').expect(200, { entries: [], files: [] });
+    expect(resolveDirectory).toHaveBeenCalledTimes(1);
+    external = false;
+    await request(modeApp).get('/api/config/plugins').expect(501);
+    expect(resolveDirectory).toHaveBeenCalledTimes(1);
+  });
+
+  test('matches only the managed route family', async () => {
+    await request(app).get('/api/config/mcp').expect(418);
+    await request(app).get('/api/config/plugins-other').expect(418);
   });
 });

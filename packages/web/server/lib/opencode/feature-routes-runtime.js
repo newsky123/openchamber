@@ -94,6 +94,7 @@ export const createFeatureRoutesRuntime = (dependencies) => {
 
   const registerRoutes = async (app, routeDependencies) => {
     const {
+      isExternalOpenCode,
       messageSearchRuntime,
       crypto,
       fs,
@@ -267,6 +268,7 @@ export const createFeatureRoutesRuntime = (dependencies) => {
     });
 
     registerPluginRoutes(app, {
+      isExternalOpenCode,
       resolveOptionalProjectDirectory,
       refreshOpenCodeAfterConfigChange,
       clientReloadDelayMs,

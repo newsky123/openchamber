@@ -300,14 +300,13 @@ export const createOpenChamberControlService = (dependencies) => {
   // session.send/fork default the directory to the caller's context directory,
   // which is wrong for sessions living in other worktrees: the prompt then
   // targets an instance that does not hold the session and the run dies with
-  // UnknownError. Resolve the target session's directory from the global
-  // session list when the caller did not scope explicitly.
+  // UnknownError. Resolve the target session's directory by its exact ID when the caller did not scope explicitly.
   const resolveSessionDirectory = async (sessionID) => {
     try {
       const client = await getClient();
-      const response = await client.session.list({});
-      const sessions = Array.isArray(response?.data) ? response.data : [];
-      const session = sessions.find((item) => item?.id === sessionID);
+      // Fetch by ID. A paginated list is not evidence that a caller does not
+      // exist, and silently losing the caller directory would widen its scope.
+      const session = await client.session.get({ sessionID });
       return asNonEmptyString(session?.location?.directory) || null;
     } catch {
       return null;
@@ -653,8 +652,7 @@ export const createOpenChamberControlService = (dependencies) => {
     }
   };
 
-  // The managed agent-tool plugin can no longer report the session's directory
-  // (v2 dropped `context.directory` from a tool call), so it sends the session
-  // id and the directory is resolved here, where it is authoritative.
+  // The compiled adapter sends the engine's caller session ID. Resolve its
+  // directory here rather than accepting caller-provided directory authority.
   return { execute, resolveSessionDirectory };
 };

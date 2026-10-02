@@ -31,7 +31,7 @@ describe('managed process lifecycle with real children', () => {
       process.env.OPENCHAMBER_MANAGED_PROCESS_REGISTRY = path.join(root, 'registry');
       const marker = path.join(root, 'pids');
       const childScript = `process.on('SIGTERM', () => {}); require('node:fs').appendFileSync(${JSON.stringify(marker)}, process.pid + '\\n'); process.stdout.write('ready\\n'); setInterval(() => {}, 1000);`;
-      let readinessMessage = 'server listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n';
+      let readinessMessage = 'openchamber capabilities {"version":1,"compiledPluginsOnly":true,"agentToolsBootstrap":0}\nserver listening on http://127.0.0.1:45678\nserver password aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n';
       // A line that looks like the readiness line but carries no URL is noise,
       // not readiness: the start must time out rather than connect to nothing.
       if (failure === 'invalid-readiness') readinessMessage = 'server listening without a URL\n';

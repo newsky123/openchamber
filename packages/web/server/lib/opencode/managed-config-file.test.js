@@ -1,186 +1,67 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-
+import { afterEach, describe, expect, it } from 'vitest';
 import { createManagedConfigRuntime, MANAGED_CONFIG_FILE_NAME } from './managed-config-file.js';
 
-const temporaryDirectories = [];
-
-afterEach(async () => {
-  await Promise.all(temporaryDirectories.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })));
-});
-
-const createHarness = async ({ settings = {}, env = {}, memoryAvailable = true } = {}) => {
-  const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'openchamber-managed-config-'));
-  temporaryDirectories.push(dataDir);
-  const agentToolRuntime = {
-    pluginDirectory: path.join(dataDir, 'agent-tool', 'openchamber-agent-tool'),
-    materializePlugin: vi.fn(async (flags) => {
-      await fs.mkdir(agentToolRuntime.pluginDirectory, { recursive: true });
-      await fs.writeFile(path.join(agentToolRuntime.pluginDirectory, 'flags.json'), JSON.stringify(flags));
-      return agentToolRuntime.pluginDirectory;
-    }),
-    createChildEnv: vi.fn(() => ({
-      OPENCHAMBER_AGENT_TOOL_URL: 'http://127.0.0.1:3901/api/openchamber/agent-tool',
-      OPENCHAMBER_AGENT_TOOL_TOKEN: 'token',
-    })),
-  };
+const directories = [];
+afterEach(async () => Promise.all(directories.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true }))));
+const createHarness = async ({ settings = {}, env = {}, memoryAvailable = true, fsPromises = fs } = {}) => {
+  const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'oc-compiled-config-'));
+  directories.push(dataDir);
   const current = { settings };
-  const runtime = createManagedConfigRuntime({
-    fsPromises: fs,
-    path,
-    dataDir,
-    env,
-    agentToolRuntime,
-    readSettings: () => current.settings,
-    isAgentMemoryAvailable: () => memoryAvailable,
-  });
-  const readConfigFile = async () => JSON.parse(await fs.readFile(path.join(dataDir, MANAGED_CONFIG_FILE_NAME), 'utf8'));
-  return { dataDir, runtime, agentToolRuntime, current, readConfigFile };
+  const runtime = createManagedConfigRuntime({ fsPromises, path, dataDir, env,
+    readSettings: async () => current.settings, isAgentMemoryAvailable: () => memoryAvailable });
+  return { dataDir, current, runtime, read: async () => JSON.parse(await fs.readFile(runtime.filePath, 'utf8')) };
 };
 
-describe('managed OpenCode config file', () => {
-  it('points the child at a config file listing the enabled plugins', async () => {
-    const { dataDir, runtime, readConfigFile } = await createHarness({
-      settings: {},
-    });
-
-    const childEnv = await runtime.buildManagedChildEnv();
-
-    expect(childEnv.OPENCODE_CONFIG).toBe(path.join(dataDir, MANAGED_CONFIG_FILE_NAME));
-    expect(childEnv.OPENCODE_CONFIG_CONTENT).toBeUndefined();
-    expect(childEnv.OPENCHAMBER_AGENT_TOOL_TOKEN).toBe('token');
-    expect(await readConfigFile()).toEqual({
-      plugins: ['-opencode.browser', path.join(dataDir, 'agent-tool', 'openchamber-agent-tool')],
-    });
+describe('compiled agent tool data-only config', () => {
+  it('publishes settings with no plugin path, token or child callback environment', async () => {
+    const { runtime, dataDir, read } = await createHarness();
+    expect(await runtime.buildManagedChildEnv()).toEqual({ OPENCODE_CONFIG: path.join(dataDir, MANAGED_CONFIG_FILE_NAME) });
+    expect(await read()).toEqual({ openchamber: { agentTools: { control: true, web: true, memory: false, notify: false, codeMode: false } } });
+    expect(await fs.readdir(dataDir)).toEqual([MANAGED_CONFIG_FILE_NAME]);
   });
-
-  it('materializes every listed plugin directory before naming it', async () => {
-    const { runtime, readConfigFile } = await createHarness({ settings: {} });
-
+  it('updates only data flags while a child is running', async () => {
+    const { runtime, current, read } = await createHarness();
     await runtime.buildManagedChildEnv();
-
-    for (const directory of (await readConfigFile()).plugins.filter((entry) => !entry.startsWith('-'))) {
-      expect((await fs.stat(directory)).isDirectory()).toBe(true);
-    }
-  });
-
-  it('keeps the callback token in the child env while every tool is off', async () => {
-    const { runtime, agentToolRuntime, readConfigFile } = await createHarness({
-      settings: { agentControlToolEnabled: false, agentWebToolEnabled: false, agentMemoryToolEnabled: false },
-    });
-
-    const childEnv = await runtime.buildManagedChildEnv();
-
-    expect(agentToolRuntime.materializePlugin).not.toHaveBeenCalled();
-    expect(await readConfigFile()).toEqual({ plugins: ['-opencode.browser'] });
-    // A tool switched on later reaches a process that can already call back.
-    expect(childEnv.OPENCHAMBER_AGENT_TOOL_TOKEN).toBe('token');
-  });
-
-  it('rewrites the file when a tool is turned off, without a new token', async () => {
-    const { dataDir, runtime, current, agentToolRuntime, readConfigFile } = await createHarness({
-      settings: {},
-    });
-    await runtime.buildManagedChildEnv();
-
-    current.settings = { agentControlToolEnabled: false, agentWebToolEnabled: false };
+    current.settings = { agentControlToolEnabled: false, agentWebToolEnabled: false, agentMemoryToolEnabled: true, agentNotifyToolEnabled: true, agentToolsCodeMode: true };
     expect(await runtime.refreshManagedConfigFile()).toEqual({ updated: true });
-
-    const { plugins } = await readConfigFile();
-    expect(plugins).toEqual(['-opencode.browser']);
-    expect(agentToolRuntime.createChildEnv).toHaveBeenCalledTimes(1);
+    expect((await read()).openchamber.agentTools).toEqual({ control: false, web: false, memory: true, notify: true, codeMode: true });
   });
-
-  it('turns a tool back on without a restart', async () => {
-    const { runtime, current, agentToolRuntime, readConfigFile } = await createHarness({
-      settings: { agentControlToolEnabled: false, agentWebToolEnabled: false },
-    });
+  it('does not enable unavailable memory', async () => {
+    const { runtime, read } = await createHarness({ settings: { agentMemoryToolEnabled: true }, memoryAvailable: false });
     await runtime.buildManagedChildEnv();
-
-    current.settings = { agentControlToolEnabled: false, agentWebToolEnabled: true };
-    await runtime.refreshManagedConfigFile();
-
-    expect((await readConfigFile()).plugins).toHaveLength(2);
-    expect(agentToolRuntime.materializePlugin).toHaveBeenCalledWith({
-      includeControl: false,
-      includeWeb: true,
-      includeMemory: false,
-      includeNotify: false,
-      codeMode: false,
-    });
+    expect((await read()).openchamber.agentTools.memory).toBe(false);
   });
-
-  it('injects the notify tool only when it is switched on', async () => {
-    const { runtime, agentToolRuntime } = await createHarness({
-      settings: { agentControlToolEnabled: false, agentWebToolEnabled: false, agentNotifyToolEnabled: true },
-    });
-
-    await runtime.buildManagedChildEnv();
-
-    expect(agentToolRuntime.materializePlugin).toHaveBeenCalledWith({
-      includeControl: false,
-      includeWeb: false,
-      includeMemory: false,
-      includeNotify: true,
-      codeMode: false,
-    });
-  });
-
-  it('puts the tools behind Code Mode only when the user asks for it', async () => {
-    const { runtime, agentToolRuntime } = await createHarness({
-      settings: { agentToolsCodeMode: true },
-    });
-
-    await runtime.buildManagedChildEnv();
-
-    expect(agentToolRuntime.materializePlugin).toHaveBeenCalledWith({
-      includeControl: true,
-      includeWeb: true,
-      includeMemory: false,
-      includeNotify: false,
-      codeMode: true,
-    });
-  });
-
-  it('leaves a config file the user owns alone and keeps the restart requirement', async () => {
-    const { dataDir, runtime } = await createHarness({
-      settings: {},
-      env: { OPENCODE_CONFIG: '/home/user/opencode.json', OPENCODE_CONFIG_CONTENT: '{"model":"test/model"}' },
-    });
-
-    const childEnv = await runtime.buildManagedChildEnv();
-
-    expect(childEnv.OPENCODE_CONFIG).toBeUndefined();
-    expect(JSON.parse(childEnv.OPENCODE_CONFIG_CONTENT)).toEqual({
-      model: 'test/model',
-      plugins: ['-opencode.browser', path.join(dataDir, 'agent-tool', 'openchamber-agent-tool')],
-    });
-    await expect(fs.stat(path.join(dataDir, MANAGED_CONFIG_FILE_NAME))).rejects.toThrow();
+  it('preserves existing config and disabled dynamic plugin entries without loading them', async () => {
+    const original = '{"model":"test/model","plugins":["custom-plugin"],"permission":[{"action":"openchamber","effect":"deny","resource":"*"}]}';
+    const env = { OPENCODE_CONFIG: '/user/opencode.json', OPENCODE_CONFIG_CONTENT: original };
+    const { runtime, dataDir } = await createHarness({ env });
+    const child = await runtime.buildManagedChildEnv();
+    const config = JSON.parse(child.OPENCODE_CONFIG_CONTENT);
+    expect(config).toMatchObject(JSON.parse(original));
+    expect(config.openchamber.agentTools.control).toBe(true);
+    expect(env.OPENCODE_CONFIG_CONTENT).toBe(original);
+    expect(await fs.readdir(dataDir)).toEqual([]);
     expect(await runtime.refreshManagedConfigFile()).toEqual({ updated: false, reason: 'external-config' });
   });
-
-  it('leaves no temp file behind and never publishes a partial list', async () => {
-    const { dataDir, runtime } = await createHarness({ settings: {} });
-
-    await runtime.buildManagedChildEnv();
-    await runtime.refreshManagedConfigFile();
-
-    const entries = await fs.readdir(dataDir);
-    expect(entries.filter((entry) => entry.includes('.tmp-'))).toEqual([]);
-    expect(entries).toContain(MANAGED_CONFIG_FILE_NAME);
+  it.each(['[]', 'null', '{broken', '{"openchamber":[]}', '{"openchamber":null}'])('rejects malformed fallback config %s without overwriting anything', async (content) => {
+    const { runtime, dataDir } = await createHarness({ env: { OPENCODE_CONFIG: '/user/config', OPENCODE_CONFIG_CONTENT: content } });
+    await expect(runtime.buildManagedChildEnv()).rejects.toThrow('valid JSON object');
+    expect(await fs.readdir(dataDir)).toEqual([]);
   });
-
-  it('ignores the memory tool while the feature is unavailable', async () => {
-    const { runtime, agentToolRuntime, readConfigFile } = await createHarness({
-      settings: { agentControlToolEnabled: false, agentWebToolEnabled: false, agentMemoryToolEnabled: true },
-      memoryAvailable: false,
-    });
-
+  it('preserves the previous settings file if an atomic replacement fails', async () => {
+    let fail = false;
+    const { runtime, current, read, dataDir } = await createHarness({ fsPromises: { ...fs, rename: async (...args) => {
+      if (fail) throw new Error('Test write failure');
+      return fs.rename(...args);
+    } } });
     await runtime.buildManagedChildEnv();
-
-    expect(agentToolRuntime.materializePlugin).not.toHaveBeenCalled();
-    expect(await readConfigFile()).toEqual({ plugins: ['-opencode.browser'] });
+    fail = true;
+    current.settings = { agentControlToolEnabled: false };
+    await expect(runtime.refreshManagedConfigFile()).rejects.toThrow('Test write failure');
+    expect((await read()).openchamber.agentTools.control).toBe(true);
+    expect(await fs.readdir(dataDir)).toEqual([MANAGED_CONFIG_FILE_NAME]);
   });
 });
